@@ -86,6 +86,12 @@ export const CodeViewHeader = memo(function CodeViewHeader({
       >
         <DiffsHubLogo />
       </Link>
+      <Link
+        href="/prs"
+        className="text-muted-foreground hover:text-foreground hidden text-sm transition-colors md:inline"
+      >
+        PRs
+      </Link>
       <DiffUrlForm
         className="order-last md:order-none md:mr-auto"
         initialUrl={initialUrl}
