@@ -1,4 +1,5 @@
 import type {
+  FileDiffMetadata,
   HunkExpansionRegion,
   HunkSeparators,
   VirtualFileMetrics,
@@ -18,6 +19,17 @@ export interface GetExpandedRegionProps {
   rangeSize: number;
   expandedHunks: Map<number, HunkExpansionRegion> | true | undefined;
   hunkIndex: number;
+  collapsedContextThreshold: number;
+}
+
+export interface GetTrailingContextRangeSizeProps {
+  fileDiff: FileDiffMetadata;
+  errorPrefix: string;
+}
+
+export interface GetTrailingExpandedRegionProps extends GetTrailingContextRangeSizeProps {
+  hunkIndex: number;
+  expandedHunks: GetExpandedRegionProps['expandedHunks'];
   collapsedContextThreshold: number;
 }
 
@@ -88,6 +100,110 @@ export function getExpandedRegion({
     rangeSize: normalizedRangeSize,
     collapsedLines: Math.max(normalizedRangeSize - expandedCount, 0),
     renderAll,
+  };
+}
+
+export function hasTrailingContext(fileDiff: FileDiffMetadata): boolean {
+  const lastHunk = fileDiff.hunks[fileDiff.hunks.length - 1];
+  if (
+    lastHunk == null ||
+    fileDiff.isPartial ||
+    fileDiff.additionLines.length === 0 ||
+    fileDiff.deletionLines.length === 0
+  ) {
+    return false;
+  }
+
+  const additionRemaining =
+    fileDiff.additionLines.length -
+    (lastHunk.additionLineIndex + lastHunk.additionCount);
+  const deletionRemaining =
+    fileDiff.deletionLines.length -
+    (lastHunk.deletionLineIndex + lastHunk.deletionCount);
+
+  return additionRemaining > 0 || deletionRemaining > 0;
+}
+
+// Measures the unchanged tail after the final hunk. Both sides must have the
+// same remaining length because trailing context represents paired lines.
+export function getTrailingContextRangeSize({
+  fileDiff,
+  errorPrefix,
+}: GetTrailingContextRangeSizeProps): number {
+  const lastHunk = fileDiff.hunks[fileDiff.hunks.length - 1];
+  if (
+    lastHunk == null ||
+    fileDiff.isPartial ||
+    fileDiff.additionLines.length === 0 ||
+    fileDiff.deletionLines.length === 0
+  ) {
+    return 0;
+  }
+
+  const additionRemaining =
+    fileDiff.additionLines.length -
+    (lastHunk.additionLineIndex + lastHunk.additionCount);
+  const deletionRemaining =
+    fileDiff.deletionLines.length -
+    (lastHunk.deletionLineIndex + lastHunk.deletionCount);
+
+  if (additionRemaining <= 0 && deletionRemaining <= 0) {
+    return 0;
+  }
+
+  if (additionRemaining !== deletionRemaining) {
+    throw new Error(
+      `${errorPrefix}: trailing context mismatch (additions=${additionRemaining}, deletions=${deletionRemaining}) for ${fileDiff.name}`
+    );
+  }
+  return Math.min(additionRemaining, deletionRemaining);
+}
+
+export function getTrailingExpandedRegion({
+  fileDiff,
+  hunkIndex,
+  expandedHunks,
+  collapsedContextThreshold,
+  errorPrefix,
+}: GetTrailingExpandedRegionProps): ExpandedRegionResult | undefined {
+  if (hunkIndex !== fileDiff.hunks.length - 1) {
+    return undefined;
+  }
+
+  const trailingRangeSize = getTrailingContextRangeSize({
+    fileDiff,
+    errorPrefix,
+  });
+  if (trailingRangeSize <= 0) {
+    return undefined;
+  }
+
+  if (
+    expandedHunks === true ||
+    trailingRangeSize <= collapsedContextThreshold
+  ) {
+    return {
+      fromStart: trailingRangeSize,
+      fromEnd: 0,
+      rangeSize: trailingRangeSize,
+      collapsedLines: 0,
+      renderAll: true,
+    };
+  }
+
+  // The final trailing separator only exposes upward partial expansion. Treat it
+  // as a bottom-only pseudo-hunk and ignore unsupported downward expansion.
+  const region = expandedHunks?.get(fileDiff.hunks.length);
+  const fromStart = Math.min(
+    Math.max(region?.fromStart ?? 0, 0),
+    trailingRangeSize
+  );
+  return {
+    fromStart,
+    fromEnd: 0,
+    rangeSize: trailingRangeSize,
+    collapsedLines: trailingRangeSize - fromStart,
+    renderAll: fromStart >= trailingRangeSize,
   };
 }
 

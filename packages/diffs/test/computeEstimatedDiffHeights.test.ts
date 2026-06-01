@@ -138,6 +138,18 @@ describe('computeEstimatedDiffHeights', () => {
     });
   });
 
+  test('accounts for partially expanded trailing context from the start only', () => {
+    const fileDiff = createTwoHunkDiff();
+    const expandedHunks = new Map([
+      [fileDiff.hunks.length, { fromStart: 2, fromEnd: 3 }],
+    ]);
+
+    expect(compute(fileDiff, { expandedHunks })).toEqual({
+      splitHeight: 346,
+      unifiedHeight: 366,
+    });
+  });
+
   test('does not estimate trailing collapsed context for partial diffs', () => {
     const fileDiff = { ...createTwoHunkDiff(), isPartial: true };
 
