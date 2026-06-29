@@ -16,6 +16,11 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://github.com/*"],
+      "js": ["github-content.js"],
+      "run_at": "document_start"
+    },
+    {
       "matches": ["https://diffs.veraze.io/*", "http://localhost:3692/*"],
       "js": ["content.js"],
       "run_at": "document_start"

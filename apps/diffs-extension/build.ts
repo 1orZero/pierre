@@ -12,6 +12,7 @@ const result = await Bun.build({
   entrypoints: [
     resolve(rootDir, 'src/background.ts'),
     resolve(rootDir, 'src/content.ts'),
+    resolve(rootDir, 'src/github-content.ts'),
     resolve(rootDir, 'src/popup.ts'),
   ],
   format: 'esm',

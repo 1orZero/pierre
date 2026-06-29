@@ -7,6 +7,8 @@ const RULE_PULL_REDIRECT = 3;
 const RULE_COMMIT_REDIRECT = 4;
 const RULE_COMPARE_WITH_SUFFIX_REDIRECT = 5;
 const RULE_COMPARE_REDIRECT = 6;
+const HEX = '[0-9a-fA-F]';
+const SHA_FULL = HEX.repeat(40);
 
 export const RULE_IDS = [
   RULE_ALLOW_SKIP,
@@ -43,8 +45,7 @@ export function buildDynamicRules(
         },
       },
       condition: {
-        regexFilter:
-          '^https://github\\.com/([^/]+/[^/]+)/pull/\\d+/(?:files|changes|commits)/([0-9a-fA-F]{7,40})(?:[?#].*)?$',
+        regexFilter: `^https://github\\.com/([^/]+/[^/]+)/pull/\\d+/(?:files|changes|commits)/(${SHA_FULL})(?:[?#].*)?$`,
         resourceTypes: ['main_frame'],
       },
     },
@@ -73,8 +74,7 @@ export function buildDynamicRules(
         },
       },
       condition: {
-        regexFilter:
-          '^https://github\\.com/([^/]+/[^/]+)/commit/([0-9a-fA-F]{7,40})(?:\\.(?:diff|patch))?(?:[?#].*)?$',
+        regexFilter: `^https://github\\.com/([^/]+/[^/]+)/commit/(${SHA_FULL})(?:\\.(?:diff|patch))?(?:[?#].*)?$`,
         resourceTypes: ['main_frame'],
       },
     },

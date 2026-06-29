@@ -27,4 +27,57 @@ describe('buildDynamicRules', () => {
       )
     ).toBe(true);
   });
+
+  test('keeps Chrome regex filters below common memory-limit pitfalls', () => {
+    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const filters = rules
+      .map((rule) => rule.condition.regexFilter)
+      .filter((filter): filter is string => typeof filter === 'string');
+
+    expect(filters.length).toBeGreaterThan(0);
+    expect(filters.every((filter) => !/[{][0-9,]+[}]/.test(filter))).toBe(true);
+  });
+
+  test('does not match commit-like paths shorter than a GitHub short SHA', () => {
+    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const filters = rules
+      .map((rule) => rule.condition.regexFilter)
+      .filter((filter): filter is string => typeof filter === 'string');
+
+    expect(
+      filters.some((filter) =>
+        new RegExp(filter).test('https://github.com/owner/repo/commit/abc123')
+      )
+    ).toBe(false);
+  });
+
+  test('matches full GitHub SHA commit-like paths', () => {
+    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const filters = rules
+      .map((rule) => rule.condition.regexFilter)
+      .filter((filter): filter is string => typeof filter === 'string');
+
+    expect(
+      filters.some((filter) =>
+        new RegExp(filter).test(
+          `https://github.com/owner/repo/commit/${'a'.repeat(40)}`
+        )
+      )
+    ).toBe(true);
+  });
+
+  test('does not match commit-like paths longer than a GitHub full SHA', () => {
+    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const filters = rules
+      .map((rule) => rule.condition.regexFilter)
+      .filter((filter): filter is string => typeof filter === 'string');
+
+    expect(
+      filters.some((filter) =>
+        new RegExp(filter).test(
+          `https://github.com/owner/repo/commit/${'a'.repeat(41)}`
+        )
+      )
+    ).toBe(false);
+  });
 });
