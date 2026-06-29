@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.options.json",
+  "include": ["build.ts", "src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["dist", "node_modules"],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "emitDeclarationOnly": false,
+    "allowJs": false,
+    "checkJs": false,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["bun", "node"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "ES2022"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@pierre/diffs-extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun ./build.ts",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

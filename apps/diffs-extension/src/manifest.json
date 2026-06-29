@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Diffs Extension",
+  "version": "0.0.0",
+  "description": "Redirect GitHub diff URLs to Diffshub with optional PAT-backed private repo support.",
+  "permissions": ["declarativeNetRequest", "storage"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://api.github.com/*",
+    "https://diffshub.com/*",
+    "http://localhost:3692/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://diffshub.com/*", "http://localhost:3692/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-enabled": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+D",
+        "mac": "MacCtrl+Shift+D"
+      },
+      "description": "Toggle Diffs Extension"
+    }
+  }
+}

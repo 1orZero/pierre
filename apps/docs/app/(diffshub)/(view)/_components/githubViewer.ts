@@ -10,7 +10,28 @@ export interface GitHubViewer {
 }
 
 type GitHubPatListener = () => void;
+interface ExtensionDiffResponse {
+  body: string;
+  id: string;
+  ok: boolean;
+  status: number;
+  tag: typeof DIFFS_EXTENSION_BRIDGE_TAG;
+  type: 'fetchDiffResult';
+}
+interface ExtensionDiffStarted {
+  id: string;
+  tag: typeof DIFFS_EXTENSION_BRIDGE_TAG;
+  type: 'fetchDiffStarted';
+}
+interface ExtensionDiffUnavailable {
+  id: string;
+  tag: typeof DIFFS_EXTENSION_BRIDGE_TAG;
+  type: 'fetchDiffUnavailable';
+}
 
+const DIFFS_EXTENSION_BRIDGE_TAG = 'diffs-extension';
+const DIFFS_EXTENSION_ACK_TIMEOUT_MS = 250;
+const DIFFS_EXTENSION_FETCH_TIMEOUT_MS = 60_000;
 let cachedToken: string | null | undefined;
 let isStorageListenerBound = false;
 const tokenListeners = new Set<GitHubPatListener>();
@@ -117,8 +138,181 @@ export function githubFetch(
   const headers = new Headers(init.headers);
   if (token != null && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
+  } else if (token == null && !headers.has('Authorization')) {
+    const extensionFetch = fetchDiffThroughExtension(input, {
+      ...init,
+      headers,
+    });
+    if (extensionFetch != null) return extensionFetch;
   }
   return fetch(input, { ...init, headers });
+}
+
+function getExtensionDiffSourceUrl(
+  input: Parameters<typeof fetch>[0]
+): string | null {
+  if (typeof window === 'undefined' || typeof input !== 'string') {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(input, window.location.origin);
+  } catch {
+    return null;
+  }
+
+  if (url.origin !== window.location.origin || url.pathname !== '/api/diff') {
+    return null;
+  }
+
+  const sourceURL = url.searchParams.get('url');
+  if (sourceURL != null && sourceURL.startsWith('https://github.com/')) {
+    return sourceURL;
+  }
+
+  const domain = url.searchParams.get('domain');
+  if (domain != null && domain !== '' && domain !== 'github.com') {
+    return null;
+  }
+
+  const path = url.searchParams.get('path');
+  if (path == null || !path.startsWith('/')) {
+    return null;
+  }
+
+  return `https://github.com${path}`;
+}
+
+function fetchDiffThroughExtension(
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit
+): Promise<Response> | null {
+  if (
+    typeof window === 'undefined' ||
+    (init.method != null && init.method.toUpperCase() !== 'GET') ||
+    init.signal?.aborted === true
+  ) {
+    return null;
+  }
+
+  const sourceUrl = getExtensionDiffSourceUrl(input);
+  if (sourceUrl == null) {
+    return null;
+  }
+
+  return new Promise<Response>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const ackTimeout = window.setTimeout(() => {
+      cleanup();
+      resolve(fetch(input, init));
+    }, DIFFS_EXTENSION_ACK_TIMEOUT_MS);
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Diffs Extension did not respond.'));
+    }, DIFFS_EXTENSION_FETCH_TIMEOUT_MS);
+
+    const abort = () => {
+      cleanup();
+      reject(new Error('Request aborted.'));
+    };
+
+    const cleanup = () => {
+      window.clearTimeout(ackTimeout);
+      window.clearTimeout(timeout);
+      window.removeEventListener('message', onMessage);
+      init.signal?.removeEventListener('abort', abort);
+    };
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window) {
+        return;
+      }
+
+      if (isExtensionDiffUnavailable(event.data, id)) {
+        cleanup();
+        resolve(fetch(input, init));
+        return;
+      }
+
+      if (isExtensionDiffStarted(event.data, id)) {
+        window.clearTimeout(ackTimeout);
+        return;
+      }
+
+      if (!isExtensionDiffResponse(event.data, id)) {
+        return;
+      }
+
+      cleanup();
+      resolve(
+        new Response(event.data.body, {
+          headers: { 'Content-Type': 'text/plain' },
+          status: normalizeExtensionResponseStatus(event.data.status),
+        })
+      );
+    };
+
+    window.addEventListener('message', onMessage);
+    init.signal?.addEventListener('abort', abort, { once: true });
+    window.postMessage(
+      {
+        id,
+        sourceUrl,
+        tag: DIFFS_EXTENSION_BRIDGE_TAG,
+        type: 'fetchDiff',
+      },
+      window.location.origin
+    );
+  });
+}
+
+function normalizeExtensionResponseStatus(status: number): number {
+  return Number.isInteger(status) && status >= 200 && status <= 599
+    ? status
+    : 500;
+}
+
+function isExtensionDiffStarted(
+  value: unknown,
+  id: string
+): value is ExtensionDiffStarted {
+  if (value == null || typeof value !== 'object') return false;
+  const message = value as Partial<ExtensionDiffStarted>;
+  return (
+    message.tag === DIFFS_EXTENSION_BRIDGE_TAG &&
+    message.type === 'fetchDiffStarted' &&
+    message.id === id
+  );
+}
+
+function isExtensionDiffUnavailable(
+  value: unknown,
+  id: string
+): value is ExtensionDiffUnavailable {
+  if (value == null || typeof value !== 'object') return false;
+  const message = value as Partial<ExtensionDiffUnavailable>;
+  return (
+    message.tag === DIFFS_EXTENSION_BRIDGE_TAG &&
+    message.type === 'fetchDiffUnavailable' &&
+    message.id === id
+  );
+}
+
+function isExtensionDiffResponse(
+  value: unknown,
+  id: string
+): value is ExtensionDiffResponse {
+  if (value == null || typeof value !== 'object') return false;
+  const message = value as Partial<ExtensionDiffResponse>;
+  return (
+    message.tag === DIFFS_EXTENSION_BRIDGE_TAG &&
+    message.type === 'fetchDiffResult' &&
+    message.id === id &&
+    typeof message.body === 'string' &&
+    typeof message.ok === 'boolean' &&
+    typeof message.status === 'number'
+  );
 }
 
 function loadViewer(token: string): Promise<GitHubViewer | null> {

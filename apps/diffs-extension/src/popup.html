@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Diffs Extension</title>
+    <style>
+      body {
+        width: 280px;
+        margin: 0;
+        padding: 14px;
+        font:
+          13px system-ui,
+          sans-serif;
+        color: #111;
+      }
+
+      label {
+        display: block;
+        margin: 10px 0 4px;
+        font-weight: 600;
+      }
+
+      input,
+      select,
+      button {
+        box-sizing: border-box;
+        width: 100%;
+        font: inherit;
+      }
+
+      input,
+      select {
+        padding: 7px;
+      }
+
+      button {
+        margin-top: 8px;
+        padding: 7px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .row input {
+        width: auto;
+      }
+
+      #status {
+        min-height: 18px;
+        margin-top: 8px;
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <strong>Diffs Extension</strong>
+      <label class="row">
+        <span>On</span>
+        <input id="enabled" type="checkbox" />
+      </label>
+    </div>
+
+    <label for="target">Target</label>
+    <select id="target">
+      <option value="prod">Production</option>
+      <option value="local">Local dev</option>
+    </select>
+
+    <label for="token">GitHub PAT</label>
+    <input id="token" type="password" autocomplete="off" />
+    <button id="save" type="button">Save PAT</button>
+    <button id="clear" type="button">Clear PAT</button>
+    <p id="status"></p>
+
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>
