@@ -1,8 +1,12 @@
 import { type NextRequest } from 'next/server';
 
+import {
+  getGitHubRequestHeaders,
+  getGitHubTokenFromRequest,
+  missingGitHubTokenResponse,
+} from '../githubAuth';
+
 const GITHUB_API_HOST = 'api.github.com';
-const GITHUB_API_VERSION = '2022-11-28';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const MAX_PAGES = 10;
 const PER_PAGE = 100;
 
@@ -23,11 +27,9 @@ interface LoadedComment {
 // alongside any new drafts. Skips outdated comments (where GitHub's `line` is
 // null) since we have no good anchor for them in the current diff.
 export async function GET(request: NextRequest): Promise<Response> {
-  if (GITHUB_TOKEN == null || GITHUB_TOKEN === '') {
-    return jsonError(
-      'GITHUB_TOKEN is not set. Add it to apps/docs/.env.local to load PR comments.',
-      503
-    );
+  const token = getGitHubTokenFromRequest(request);
+  if (token == null) {
+    return missingGitHubTokenResponse('load PR comments');
   }
 
   const searchParams = request.nextUrl.searchParams;
@@ -47,6 +49,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       owner,
       repo,
       pullNumber,
+      token,
       request.signal
     );
     return Response.json({ comments });
@@ -62,6 +65,7 @@ async function fetchAllComments(
   owner: string,
   repo: string,
   pullNumber: number,
+  token: string,
   signal: AbortSignal
 ): Promise<LoadedComment[]> {
   const out: LoadedComment[] = [];
@@ -70,12 +74,7 @@ async function fetchAllComments(
       `https://${GITHUB_API_HOST}/repos/${owner}/${repo}/pulls/${pullNumber}/comments?per_page=${PER_PAGE}&page=${page}`,
       {
         cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-          'User-Agent': 'pierre-diffshub',
-          'X-GitHub-Api-Version': GITHUB_API_VERSION,
-        },
+        headers: getGitHubRequestHeaders(token),
         signal,
       }
     );

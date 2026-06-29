@@ -16,8 +16,8 @@ interface DraftAnnotationProps {
   annotation: DiffLineAnnotation<DraftCommentMetadata>;
   itemId: string;
   onCancel(itemId: string, key: string): void;
-  // `author` is widened from AvatarName to string because, when GITHUB_TOKEN
-  // is set, the draft preview attributes itself to the GitHub viewer's login
+  // `author` is widened from AvatarName to string because, when a PAT is saved,
+  // the draft preview attributes itself to the GitHub viewer's login
   // (not a Pierre persona). The wrapper still overrides this for PR-route
   // posts with whatever GitHub attributes the comment to server-side.
   // `avatarUrl` is forwarded too so the optimistic saved-state render uses

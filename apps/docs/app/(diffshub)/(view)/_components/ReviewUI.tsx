@@ -153,6 +153,10 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
         }
         return { accepted: true };
       }
+      if (viewer == null) {
+        toast.error('Add a GitHub PAT to post comments.');
+        return { accepted: false };
+      }
       const file = commentFileByItemId?.get(event.itemId);
       if (file == null) {
         toast.error('Could not resolve the file for this comment.');
@@ -205,6 +209,10 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
       if (pullIdentity == null) {
         return true;
       }
+      if (viewer == null) {
+        toast.error('Add a GitHub PAT to delete comments.');
+        return false;
+      }
       try {
         await deleteGitHubComment(event.githubCommentId, pullIdentity);
         return true;
@@ -215,7 +223,7 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
         return false;
       }
     },
-    [pullIdentity]
+    [pullIdentity, viewer]
   );
 
   // Once the diff has finished streaming and we know the PR + file map, fetch
@@ -227,7 +235,8 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
     if (
       pullIdentity == null ||
       commentFileByItemId == null ||
-      loadState !== 'ready'
+      loadState !== 'ready' ||
+      viewer == null
     ) {
       return;
     }
@@ -328,7 +337,13 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
     return () => {
       controller.abort();
     };
-  }, [commentFileByItemId, loadState, pullIdentity, setCommentSections]);
+  }, [
+    commentFileByItemId,
+    loadState,
+    pullIdentity,
+    setCommentSections,
+    viewer,
+  ]);
 
   const handleToggleFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen((open) => !open);

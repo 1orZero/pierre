@@ -1,5 +1,7 @@
 import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
 
+import { githubFetch } from './githubViewer';
+
 // Identifies a PR-shaped GitHub path so the client only enables comment
 // posting on pulls. Commits and compares have no equivalent line-comment API
 // surface and stay client-only drafts.
@@ -69,7 +71,7 @@ export async function submitDraftCommentToGitHub(
 
   let response: Response;
   try {
-    response = await fetch('/api/comment', {
+    response = await githubFetch('/api/comment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),

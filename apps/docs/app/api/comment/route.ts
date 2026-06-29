@@ -1,8 +1,12 @@
 import { type NextRequest } from 'next/server';
 
+import {
+  getGitHubRequestHeaders,
+  getGitHubTokenFromRequest,
+  missingGitHubTokenResponse,
+} from '../githubAuth';
+
 const GITHUB_API_HOST = 'api.github.com';
-const GITHUB_API_VERSION = '2022-11-28';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 interface SubmitCommentRequest {
   owner: string;
@@ -25,14 +29,12 @@ interface SubmitCommentResponse {
 
 // Posts a draft annotation to GitHub as a real PR review comment. Fetches the
 // PR's head SHA server-side (GitHub requires `commit_id` to be a SHA from the
-// PR's commit history), then forwards the comment payload. Both calls use the
-// PAT in GITHUB_TOKEN; the route is only meant for local self-hosted use.
+// PR's commit history), then forwards the comment payload. The PAT comes from
+// the current browser request, never process env.
 export async function POST(request: NextRequest): Promise<Response> {
-  if (GITHUB_TOKEN == null || GITHUB_TOKEN === '') {
-    return jsonError(
-      'GITHUB_TOKEN is not set. Add it to apps/docs/.env.local to enable comment posting.',
-      503
-    );
+  const token = getGitHubTokenFromRequest(request);
+  if (token == null) {
+    return missingGitHubTokenResponse('post comments');
   }
 
   let payload: unknown;
@@ -51,6 +53,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     parsed.owner,
     parsed.repo,
     parsed.pullNumber,
+    token,
     request.signal
   );
   if (headSha == null) {
@@ -75,7 +78,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       `https://${GITHUB_API_HOST}/repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.pullNumber}/comments`,
       {
         method: 'POST',
-        headers: getGitHubRequestHeaders(),
+        headers: getGitHubRequestHeaders(token),
         body: JSON.stringify(githubBody),
         signal: request.signal,
       }
@@ -113,6 +116,7 @@ async function fetchPullRequestHeadSha(
   owner: string,
   repo: string,
   pullNumber: number,
+  token: string,
   signal: AbortSignal
 ): Promise<string | undefined> {
   let response: Response;
@@ -121,7 +125,7 @@ async function fetchPullRequestHeadSha(
       `https://${GITHUB_API_HOST}/repos/${owner}/${repo}/pulls/${pullNumber}`,
       {
         cache: 'no-store',
-        headers: getGitHubRequestHeaders(),
+        headers: getGitHubRequestHeaders(token),
         signal,
       }
     );
@@ -152,15 +156,6 @@ async function fetchPullRequestHeadSha(
     return (json as { head: { sha: string } }).head.sha;
   }
   return undefined;
-}
-
-function getGitHubRequestHeaders(): Record<string, string> {
-  return {
-    Accept: 'application/vnd.github+json',
-    Authorization: `Bearer ${GITHUB_TOKEN}`,
-    'User-Agent': 'pierre-diffshub',
-    'X-GitHub-Api-Version': GITHUB_API_VERSION,
-  };
 }
 
 function parseSubmitCommentRequest(

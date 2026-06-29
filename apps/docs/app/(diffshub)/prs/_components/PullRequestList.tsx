@@ -3,7 +3,12 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-import { useGitHubViewer } from '../../(view)/_components/githubViewer';
+import { GitHubPatButton } from '../../(view)/_components/GitHubPatButton';
+import {
+  githubFetch,
+  useGitHubPat,
+  useGitHubViewer,
+} from '../../(view)/_components/githubViewer';
 import { cn } from '@/lib/utils';
 
 type PullState = 'open' | 'closed';
@@ -62,6 +67,7 @@ function getPullsCacheKey(
 
 export function PullRequestList() {
   const viewer = useGitHubViewer();
+  const token = useGitHubPat();
   const [role, setRole] = useState<PullRole>('review-requested');
   const [state, setState] = useState<PullState>('open');
   const [repoFilter, setRepoFilter] = useState<RepoFilter>(null);
@@ -72,6 +78,15 @@ export function PullRequestList() {
   >('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    cachedRepos = undefined;
+    pullsCache.clear();
+    setRepos([]);
+    setPulls([]);
+    setLoadState('idle');
+    setErrorMessage(null);
+  }, [token]);
+
   // Load the repo list once on mount so the dropdown is populated. Failures
   // are non-fatal; the user can still browse "My PRs" without a repo list.
   useEffect(() => {
@@ -81,7 +96,7 @@ export function PullRequestList() {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch('/api/repos', {
+        const response = await githubFetch('/api/repos', {
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -131,7 +146,7 @@ export function PullRequestList() {
     }
     void (async () => {
       try {
-        const response = await fetch(`/api/pulls?${params}`, {
+        const response = await githubFetch(`/api/pulls?${params}`, {
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -168,90 +183,93 @@ export function PullRequestList() {
     };
   }, [viewer, role, state, repoFilter]);
 
-  if (viewer === undefined) {
-    return <div className="text-muted-foreground p-6 text-sm">Loading…</div>;
-  }
-  if (viewer === null) {
-    return (
-      <div className="text-muted-foreground p-6 text-sm">
-        Set <code>GITHUB_TOKEN</code> in <code>apps/docs/.env.local</code> to
-        list PRs.
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto flex h-dvh max-w-3xl flex-col gap-4 p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Pull requests</h1>
         <div className="flex items-center gap-2 text-sm">
-          <select
-            value={repoFilter ?? ''}
-            onChange={(event) => {
-              const next = event.currentTarget.value;
-              setRepoFilter(next === '' ? null : next);
-            }}
-            className="bg-background hover:bg-muted rounded-md border border-[rgb(0_0_0_/_0.1)] px-2 py-1 outline-none dark:border-[rgb(255_255_255_/_0.15)]"
-          >
-            <option value="">My PRs</option>
-            {repos.length > 0 && (
-              <optgroup label="Repos">
-                {repos.map((repo) => (
-                  <option key={repo.fullName} value={repo.fullName}>
-                    {repo.fullName}
-                    {repo.private ? ' (private)' : ''}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-          <button
-            type="button"
-            className={cn(
-              'rounded-md px-2 py-1',
-              state === 'open'
-                ? 'bg-foreground text-background'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-            onClick={() => setState('open')}
-          >
-            Open
-          </button>
-          <button
-            type="button"
-            className={cn(
-              'rounded-md px-2 py-1',
-              state === 'closed'
-                ? 'bg-foreground text-background'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-            onClick={() => setState('closed')}
-          >
-            Closed
-          </button>
+          {viewer != null && (
+            <>
+              <select
+                value={repoFilter ?? ''}
+                onChange={(event) => {
+                  const next = event.currentTarget.value;
+                  setRepoFilter(next === '' ? null : next);
+                }}
+                className="bg-background hover:bg-muted rounded-md border border-[rgb(0_0_0_/_0.1)] px-2 py-1 outline-none dark:border-[rgb(255_255_255_/_0.15)]"
+              >
+                <option value="">My PRs</option>
+                {repos.length > 0 && (
+                  <optgroup label="Repos">
+                    {repos.map((repo) => (
+                      <option key={repo.fullName} value={repo.fullName}>
+                        {repo.fullName}
+                        {repo.private ? ' (private)' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <button
+                type="button"
+                className={cn(
+                  'rounded-md px-2 py-1',
+                  state === 'open'
+                    ? 'bg-foreground text-background'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setState('open')}
+              >
+                Open
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  'rounded-md px-2 py-1',
+                  state === 'closed'
+                    ? 'bg-foreground text-background'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setState('closed')}
+              >
+                Closed
+              </button>
+            </>
+          )}
+          <GitHubPatButton />
         </div>
       </header>
 
-      <nav className="flex gap-1 border-b border-[rgb(0_0_0_/_0.1)] dark:border-[rgb(255_255_255_/_0.15)]">
-        {ROLE_TABS.map((tab) => (
-          <button
-            key={tab.value}
-            type="button"
-            className={cn(
-              '-mb-px border-b-2 px-3 py-2 text-sm',
-              role === tab.value
-                ? 'border-foreground text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            )}
-            onClick={() => setRole(tab.value)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {viewer != null && (
+        <nav className="flex gap-1 border-b border-[rgb(0_0_0_/_0.1)] dark:border-[rgb(255_255_255_/_0.15)]">
+          {ROLE_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              className={cn(
+                '-mb-px border-b-2 px-3 py-2 text-sm',
+                role === tab.value
+                  ? 'border-foreground text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => setRole(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {loadState === 'loading' ? (
+        {viewer === undefined ? (
+          <div className="text-muted-foreground p-4 text-sm">Loading…</div>
+        ) : viewer === null ? (
+          <div className="text-muted-foreground p-4 text-sm">
+            {token == null
+              ? 'Add a GitHub PAT to list PRs.'
+              : 'Saved GitHub PAT could not be verified.'}
+          </div>
+        ) : loadState === 'loading' ? (
           <div className="text-muted-foreground p-4 text-sm">Loading…</div>
         ) : loadState === 'error' ? (
           <div className="text-destructive p-4 text-sm">{errorMessage}</div>

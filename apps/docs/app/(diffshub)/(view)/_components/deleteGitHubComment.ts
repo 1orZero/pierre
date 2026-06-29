@@ -1,5 +1,6 @@
 'use client';
 
+import { githubFetch } from './githubViewer';
 import type { GitHubPullIdentity } from './submitDraftCommentToGitHub';
 
 // DELETEs a PR review comment via the local /api/comment/[id] proxy. Throws
@@ -10,7 +11,7 @@ export async function deleteGitHubComment(
 ): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`/api/comment/${commentId}`, {
+    response = await githubFetch(`/api/comment/${commentId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ owner: pull.owner, repo: pull.repo }),

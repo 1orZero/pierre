@@ -2,6 +2,7 @@
 
 import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
 
+import { githubFetch } from './githubViewer';
 import type { GitHubPullIdentity } from './submitDraftCommentToGitHub';
 
 export interface LoadedPullComment {
@@ -42,7 +43,7 @@ export async function loadGitHubPullComments(
     repo: pull.repo,
     pullNumber: String(pull.pullNumber),
   });
-  const response = await fetch(`/api/comments?${searchParams}`, {
+  const response = await githubFetch(`/api/comments?${searchParams}`, {
     cache: 'no-store',
     signal,
   });

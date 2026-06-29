@@ -26,6 +26,7 @@ import {
   takePendingCodeViewItems,
 } from './codeViewDataAccumulator';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from './constants';
+import { githubFetch, useGitHubPat } from './githubViewer';
 import { getPatchTreePathPrefix } from './gitPatchMetadata';
 import {
   type CodeViewLineHashTarget,
@@ -103,6 +104,7 @@ export function usePatchLoader({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
+  const githubPat = useGitHubPat();
   const requestIdRef = useRef(0);
   const appliedLineHashKeyRef = useRef<string | null>(null);
   const viewerKeyRef = useRef(0);
@@ -269,7 +271,7 @@ export function usePatchLoader({
         }
 
         console.time('--     request time');
-        const response = await fetch(`/api/diff?${patchSearchParams}`, {
+        const response = await githubFetch(`/api/diff?${patchSearchParams}`, {
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -488,6 +490,7 @@ export function usePatchLoader({
     };
   }, [
     domain,
+    githubPat,
     loadAttempt,
     onLoadStart,
     path,

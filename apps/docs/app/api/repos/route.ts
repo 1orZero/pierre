@@ -1,8 +1,12 @@
 import { type NextRequest } from 'next/server';
 
+import {
+  getGitHubRequestHeaders,
+  getGitHubTokenFromRequest,
+  missingGitHubTokenResponse,
+} from '../githubAuth';
+
 const GITHUB_API_HOST = 'api.github.com';
-const GITHUB_API_VERSION = '2022-11-28';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const PER_PAGE = 100;
 
 interface RepoSummary {
@@ -16,11 +20,9 @@ interface RepoSummary {
 // scope-by-repo dropdown. Sorted by recent activity to keep the list useful
 // when capped at GitHub's 100-per-page max.
 export async function GET(request: NextRequest): Promise<Response> {
-  if (GITHUB_TOKEN == null || GITHUB_TOKEN === '') {
-    return jsonError(
-      'GITHUB_TOKEN is not set. Add it to apps/docs/.env.local to list repos.',
-      503
-    );
+  const token = getGitHubTokenFromRequest(request);
+  if (token == null) {
+    return missingGitHubTokenResponse('list repos');
   }
 
   const url = new URL(`https://${GITHUB_API_HOST}/user/repos`);
@@ -33,12 +35,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   try {
     response = await fetch(url.href, {
       cache: 'no-store',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        'User-Agent': 'pierre-diffshub',
-        'X-GitHub-Api-Version': GITHUB_API_VERSION,
-      },
+      headers: getGitHubRequestHeaders(token),
       signal: request.signal,
     });
   } catch {

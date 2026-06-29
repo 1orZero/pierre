@@ -16,6 +16,7 @@ import { type Dispatch, memo, type SetStateAction, useState } from 'react';
 
 import { DiffUrlForm } from '../../_components/DiffUrlForm';
 import { DiffsHubLogo } from './DiffsHubLogo';
+import { GitHubPatButton } from './GitHubPatButton';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
 import {
@@ -113,6 +114,7 @@ export const CodeViewHeader = memo(function CodeViewHeader({
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
         <div className="flex items-center gap-2">
+          <GitHubPatButton />
           {showExternalLink && (
             <>
               <Button

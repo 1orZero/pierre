@@ -1,8 +1,12 @@
 import { type NextRequest } from 'next/server';
 
+import {
+  getGitHubRequestHeaders,
+  getGitHubTokenFromRequest,
+  missingGitHubTokenResponse,
+} from '../../githubAuth';
+
 const GITHUB_API_HOST = 'api.github.com';
-const GITHUB_API_VERSION = '2022-11-28';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 // Deletes a PR review comment from GitHub. The comment id is a URL segment;
 // owner/repo come from the JSON body since GitHub's delete endpoint is
@@ -12,11 +16,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  if (GITHUB_TOKEN == null || GITHUB_TOKEN === '') {
-    return jsonError(
-      'GITHUB_TOKEN is not set. Add it to apps/docs/.env.local to delete PR comments.',
-      503
-    );
+  const token = getGitHubTokenFromRequest(request);
+  if (token == null) {
+    return missingGitHubTokenResponse('delete PR comments');
   }
 
   const { id } = await params;
@@ -45,12 +47,7 @@ export async function DELETE(
       `https://${GITHUB_API_HOST}/repos/${owner}/${repo}/pulls/comments/${commentId}`,
       {
         method: 'DELETE',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-          'User-Agent': 'pierre-diffshub',
-          'X-GitHub-Api-Version': GITHUB_API_VERSION,
-        },
+        headers: getGitHubRequestHeaders(token),
         signal: request.signal,
       }
     );

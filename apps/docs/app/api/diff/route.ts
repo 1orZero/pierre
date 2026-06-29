@@ -1,5 +1,7 @@
 import { type NextRequest } from 'next/server';
 
+import { getGitHubTokenFromRequest } from '../githubAuth';
+
 const CACHE_CONTROL = 'no-store';
 const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
 const GITHUB_API_HOST = 'api.github.com';
@@ -19,8 +21,6 @@ const GITHUB_PULL_NUMBER_PATTERN = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)$/;
 const GITHUB_COMMIT_SHA_PATTERN =
   /^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]{4,40})$/i;
 const GITHUB_COMPARE_PATTERN = /^\/([^/]+)\/([^/]+)\/compare\/(.+)$/;
-
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 const CACHED_BLOBS = new Map<string, string>([
   [
@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
   const path = searchParams.get('path');
   const domain = searchParams.get('domain');
   const url = searchParams.get('url');
+  const token = getGitHubTokenFromRequest(request);
 
   if (path == null && url == null) {
     return createTextResponse('Path or URL parameter is required', {
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest) {
     // exposes raw PR diffs through patch-diff.githubusercontent.com. Tangled
     // paths use an explicit domain query parameter and are normalized to their
     // patch endpoint.
-    const patchRequest = resolvePatchRequest(path, domain, url);
+    const patchRequest = resolvePatchRequest(path, domain, url, token);
     if (patchRequest == null) {
       return createTextResponse('Invalid GitHub patch URL format', {
         status: 400,
@@ -104,10 +105,11 @@ export async function GET(request: NextRequest) {
 function resolvePatchRequest(
   path: string | null,
   domain: string | null,
-  url: string | null
+  url: string | null,
+  token: string | undefined
 ): ResolvedPatchRequest | undefined {
   if (url != null) {
-    return resolvePatchURLInput(url);
+    return resolvePatchURLInput(url, token);
   }
 
   if (path == null) {
@@ -119,12 +121,15 @@ function resolvePatchRequest(
     return patchURL == null ? undefined : { patchURL };
   }
 
-  return resolvePatchURLInput(path);
+  return resolvePatchURLInput(path, token);
 }
 
-function resolvePatchURLInput(input: string): ResolvedPatchRequest | undefined {
+function resolvePatchURLInput(
+  input: string,
+  token: string | undefined
+): ResolvedPatchRequest | undefined {
   if (input.startsWith('/')) {
-    return resolveGitHubPatchRequest(input);
+    return resolveGitHubPatchRequest(input, token);
   }
 
   let parsedURL: URL;
@@ -139,7 +144,7 @@ function resolvePatchURLInput(input: string): ResolvedPatchRequest | undefined {
   }
 
   if (parsedURL.hostname === GITHUB_HOST) {
-    return resolveGitHubPatchRequest(parsedURL.pathname);
+    return resolveGitHubPatchRequest(parsedURL.pathname, token);
   }
 
   if (
@@ -157,7 +162,8 @@ function resolvePatchURLInput(input: string): ResolvedPatchRequest | undefined {
 }
 
 function resolveGitHubPatchRequest(
-  path: string
+  path: string,
+  token: string | undefined
 ): ResolvedPatchRequest | undefined {
   if (path === '/') {
     return undefined;
@@ -173,7 +179,7 @@ function resolveGitHubPatchRequest(
     return { patchURL: blobPatchURL };
   }
 
-  if (GITHUB_TOKEN != null && GITHUB_TOKEN !== '') {
+  if (token != null) {
     const apiURL = resolveGitHubApiURL(normalizedPath);
     if (apiURL != null) {
       return {
@@ -181,7 +187,7 @@ function resolveGitHubPatchRequest(
         sourceURL: `https://${GITHUB_HOST}${normalizedPath}`,
         requestHeaders: {
           Accept: GITHUB_DIFF_ACCEPT,
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Authorization: `Bearer ${token}`,
         },
       };
     }
