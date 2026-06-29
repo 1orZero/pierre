@@ -13,7 +13,7 @@ describe('buildDynamicRules', () => {
     expect(rules.map((rule) => rule.id)).toEqual(RULE_IDS);
     expect(
       rules.some((rule) =>
-        JSON.stringify(rule.action).includes('https://diffshub.com')
+        JSON.stringify(rule.action).includes('https://diffs.veraze.io')
       )
     ).toBe(true);
   });

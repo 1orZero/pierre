@@ -6,8 +6,7 @@ export const STORAGE_KEYS = {
 export const SKIP_PARAM = 'diffs-extension-skip';
 
 export const TARGET_ORIGINS = {
-  // TODO: Update this before release when the production Diffshub domain changes.
-  prod: 'https://diffshub.com',
+  prod: 'https://diffs.veraze.io',
   local: 'http://localhost:3692',
 } as const;
 

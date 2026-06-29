@@ -7,7 +7,7 @@
   "host_permissions": [
     "https://github.com/*",
     "https://api.github.com/*",
-    "https://diffshub.com/*",
+    "https://diffs.veraze.io/*",
     "http://localhost:3692/*"
   ],
   "background": {
@@ -16,7 +16,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://diffshub.com/*", "http://localhost:3692/*"],
+      "matches": ["https://diffs.veraze.io/*", "http://localhost:3692/*"],
       "js": ["content.js"],
       "run_at": "document_start"
     }

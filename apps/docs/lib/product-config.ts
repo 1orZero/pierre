@@ -48,8 +48,7 @@ export const PRODUCTS: Record<ProductId, ProductConfig> = {
     installCommand: 'bun i @pierre/trees',
     githubUrl: 'https://github.com/pierrecomputer/pierre',
   },
-  // Stub microsite. No package, no docs yet — copy is intentionally
-  // placeholder until we figure out what diffshub.com actually is.
+  // Stub microsite. No package or docs yet.
   diffshub: {
     id: 'diffshub',
     name: 'DiffsHub',
@@ -70,7 +69,7 @@ export const PRODUCTS: Record<ProductId, ProductConfig> = {
 const EXTERNAL_URLS: Record<ProductId, string> = {
   diffs: 'https://diffs.com',
   trees: 'https://trees.software',
-  diffshub: 'https://diffshub.com',
+  diffshub: 'https://diffs.veraze.io',
 };
 
 /**

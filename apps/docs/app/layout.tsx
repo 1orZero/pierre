@@ -104,7 +104,7 @@ const SITE_PRODUCT = PRODUCTS[SITE];
 const PROD_ORIGIN_BY_SITE: Record<ProductId, string> = {
   diffs: 'https://diffs.com',
   trees: 'https://trees.software',
-  diffshub: 'https://diffshub.com',
+  diffshub: 'https://diffs.veraze.io',
 };
 const DEV_PORT_BY_SITE: Record<ProductId, string> = {
   diffs: '3690',

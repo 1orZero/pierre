@@ -55,8 +55,8 @@ describe('getDiffshubUrl', () => {
   test('builds a target URL for supported GitHub URLs', () => {
     expect(
       getDiffshubUrl('https://github.com/owner/repo/pull/123/files', {
-        targetOrigin: 'https://diffshub.com',
+        targetOrigin: 'https://diffs.veraze.io',
       })
-    ).toBe('https://diffshub.com/owner/repo/pull/123');
+    ).toBe('https://diffs.veraze.io/owner/repo/pull/123');
   });
 });

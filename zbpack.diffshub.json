@@ -1,0 +1,5 @@
+{
+  "app_dir": "/",
+  "build_command": "NEXT_PUBLIC_SITE=diffshub bun run docs:build",
+  "start_command": "cd apps/docs && NEXT_PUBLIC_SITE=diffshub bun run start"
+}

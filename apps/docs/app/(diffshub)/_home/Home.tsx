@@ -54,7 +54,7 @@ export default function DiffshubHome() {
           View code changes from any public GitHub diff—PRs, comparisons,
           commits, diffs, and patches—with a super-freaking-fast, beautiful, and
           virtualized interface by replacing <code>github.com</code> with{' '}
-          <code>diffshub.com</code>.
+          <code>diffs.veraze.io</code>.
         </p>
         <div className="text-muted-foreground flex flex-col gap-[2px] font-mono leading-[22px] tracking-tight">
           <code className="diffshub-border-deleted rounded-l font-normal text-inherit">
@@ -64,8 +64,8 @@ export default function DiffshubHome() {
             </span>
           </code>
           <code className="truncate rounded-l border-l-[4px] border-[#07c480] font-normal text-inherit">
-            <code className={DIFF_LINE_ADDED_BADGE}>+ diffshub</code>
-            .com/org/repo/pull/number
+            <code className={DIFF_LINE_ADDED_BADGE}>+ diffs</code>
+            .veraze.io/org/repo/pull/number
           </code>
         </div>
         <HomeFetchForm />
