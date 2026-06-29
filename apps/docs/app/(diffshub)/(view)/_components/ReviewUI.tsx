@@ -22,6 +22,7 @@ import {
   CodeViewWrapper,
 } from './CodeViewWrapper';
 import { deleteGitHubComment } from './deleteGitHubComment';
+import { useDiffsExtensionNavigation } from './diffsExtensionNavigation';
 import { useGitHubViewer } from './githubViewer';
 import { loadGitHubPullComments } from './loadGitHubPullComments';
 import {
@@ -50,6 +51,7 @@ interface ReviewUIProps {
 
 export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
   useEffect(preloadAvatars, []);
+  useDiffsExtensionNavigation(initialUrl);
 
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');

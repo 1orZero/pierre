@@ -1,4 +1,29 @@
+import { type ExtensionTarget } from './config';
+
 export const BRIDGE_TAG = 'diffs-extension';
+
+export interface ExtensionStatus {
+  enabled: boolean;
+  target: ExtensionTarget;
+  targetOrigin: string;
+}
+
+export interface ExtensionStatusRequest {
+  id: string;
+  tag: typeof BRIDGE_TAG;
+  type: 'getStatus';
+}
+
+export interface ExtensionStatusResponse extends ExtensionStatus {
+  id: string;
+  tag: typeof BRIDGE_TAG;
+  type: 'extensionStatus';
+}
+
+export interface ExtensionStatusChanged extends ExtensionStatus {
+  tag: typeof BRIDGE_TAG;
+  type: 'extensionStatusChanged';
+}
 
 export interface FetchDiffRequest {
   id: string;
@@ -28,11 +53,25 @@ export interface FetchDiffUnavailable {
   type: 'fetchDiffUnavailable';
 }
 
-export type PageToContentMessage = FetchDiffRequest;
+export type PageToContentMessage = ExtensionStatusRequest | FetchDiffRequest;
 export type ContentToPageMessage =
+  | ExtensionStatusChanged
+  | ExtensionStatusResponse
   | FetchDiffResponse
   | FetchDiffStarted
   | FetchDiffUnavailable;
+
+export function isExtensionStatusRequest(
+  value: unknown
+): value is ExtensionStatusRequest {
+  if (value == null || typeof value !== 'object') return false;
+  const message = value as Partial<ExtensionStatusRequest>;
+  return (
+    message.tag === BRIDGE_TAG &&
+    message.type === 'getStatus' &&
+    typeof message.id === 'string'
+  );
+}
 
 export function isFetchDiffRequest(value: unknown): value is FetchDiffRequest {
   if (value == null || typeof value !== 'object') return false;

@@ -1,13 +1,25 @@
-import { SKIP_PARAM, STORAGE_KEYS } from './lib/config';
+import {
+  type ExtensionConfig,
+  SKIP_PARAM,
+  STORAGE_KEYS,
+  TARGET_ORIGINS,
+} from './lib/config';
 import {
   BRIDGE_TAG,
+  type ExtensionStatus,
+  type ExtensionStatusChanged,
+  type ExtensionStatusResponse,
   type FetchDiffResponse,
   type FetchDiffStarted,
   type FetchDiffUnavailable,
+  isExtensionStatusRequest,
   isFetchDiffRequest,
 } from './lib/messages';
+import { getExtensionStorage } from './lib/storage';
 
+const extensionStorage = getExtensionStorage();
 let hasToken: boolean | undefined;
+let config: ExtensionConfig | undefined;
 
 async function syncPatState(): Promise<void> {
   const data = await chrome.storage.local.get(STORAGE_KEYS.token);
@@ -15,16 +27,64 @@ async function syncPatState(): Promise<void> {
   hasToken = typeof token === 'string' && token.trim() !== '';
 }
 
+async function syncConfigState(): Promise<void> {
+  config = await extensionStorage.getConfig();
+}
+
+async function getStatus(): Promise<ExtensionStatus> {
+  if (config === undefined) {
+    await syncConfigState();
+  }
+  const currentConfig = config ?? (await extensionStorage.getConfig());
+  return {
+    enabled: currentConfig.enabled,
+    target: currentConfig.target,
+    targetOrigin: TARGET_ORIGINS[currentConfig.target],
+  };
+}
+
+async function postStatusResponse(id: string): Promise<void> {
+  window.postMessage(
+    {
+      ...(await getStatus()),
+      id,
+      tag: BRIDGE_TAG,
+      type: 'extensionStatus',
+    } satisfies ExtensionStatusResponse,
+    window.location.origin
+  );
+}
+
+async function postStatusChanged(): Promise<void> {
+  window.postMessage(
+    {
+      ...(await getStatus()),
+      tag: BRIDGE_TAG,
+      type: 'extensionStatusChanged',
+    } satisfies ExtensionStatusChanged,
+    window.location.origin
+  );
+}
+
 void syncPatState();
+void syncConfigState();
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes[STORAGE_KEYS.token] != null) {
     void syncPatState();
   }
+  if (areaName === 'sync' && changes[STORAGE_KEYS.config] != null) {
+    void syncConfigState().then(() => postStatusChanged());
+  }
 });
 
 window.addEventListener('message', (event) => {
-  if (event.source !== window || !isFetchDiffRequest(event.data)) return;
+  if (event.source !== window) return;
+  if (isExtensionStatusRequest(event.data)) {
+    void postStatusResponse(event.data.id);
+    return;
+  }
+  if (!isFetchDiffRequest(event.data)) return;
 
   void (async () => {
     if (hasToken === undefined) {
