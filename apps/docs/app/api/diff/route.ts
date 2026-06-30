@@ -64,6 +64,15 @@ export async function GET(request: NextRequest) {
   const domain = searchParams.get('domain');
   const url = searchParams.get('url');
   const token = getGitHubTokenFromRequest(request);
+  console.info(
+    '[DiffsHub API] diff request',
+    JSON.stringify({
+      domain,
+      hasAuthorization: token != null,
+      path,
+      url: url == null ? null : summarizeURLForLog(url),
+    })
+  );
 
   if (path == null && url == null) {
     return createTextResponse('Path or URL parameter is required', {
@@ -78,11 +87,23 @@ export async function GET(request: NextRequest) {
     // patch endpoint.
     const patchRequest = resolvePatchRequest(path, domain, url, token);
     if (patchRequest == null) {
+      console.info('[DiffsHub API] diff request rejected');
       return createTextResponse('Invalid GitHub patch URL format', {
         status: 400,
       });
     }
 
+    console.info(
+      '[DiffsHub API] diff request resolved',
+      JSON.stringify({
+        hasUpstreamAuthorization:
+          patchRequest.requestHeaders?.Authorization != null,
+        sourceURL: summarizeURLForLog(
+          patchRequest.sourceURL ?? patchRequest.patchURL
+        ),
+        upstreamHost: new URL(patchRequest.patchURL).hostname,
+      })
+    );
     return await createPatchStreamResponse(
       patchRequest.patchURL,
       request.signal,
@@ -92,6 +113,12 @@ export async function GET(request: NextRequest) {
       }
     );
   } catch (error) {
+    console.info(
+      '[DiffsHub API] diff request failed',
+      JSON.stringify({
+        message: error instanceof Error ? error.message : 'Unknown error',
+      })
+    );
     return createTextResponse(
       error instanceof Error ? error.message : 'Unknown error',
       { status: 500 }
@@ -296,6 +323,15 @@ function isAllowedHTTPSURL(url: URL): boolean {
   );
 }
 
+function summarizeURLForLog(input: string): string {
+  try {
+    const url = new URL(input);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return input.split(/[?#]/, 1)[0] ?? '';
+  }
+}
+
 // Accepts the plaintext content types diff/patch responses come back as. The
 // anonymous github.com `.diff` endpoint returns `text/plain`; the
 // api.github.com REST endpoints with `Accept: application/vnd.github.v3.diff`
@@ -355,9 +391,30 @@ async function createPatchStreamResponse(
       signal: upstreamController.signal,
     });
   } catch {
+    console.info(
+      '[DiffsHub API] upstream fetch failed',
+      JSON.stringify({
+        hasUpstreamAuthorization: options.requestHeaders?.Authorization != null,
+        sourceURL: summarizeURLForLog(options.sourceURL ?? patchURL),
+        upstreamHost: new URL(patchURL).hostname,
+      })
+    );
     requestSignal.removeEventListener('abort', abortUpstream);
     return createTextResponse('Failed to fetch patch.', { status: 502 });
   }
+
+  console.info(
+    '[DiffsHub API] upstream response',
+    JSON.stringify({
+      contentLength: response.headers.get('Content-Length'),
+      contentType: response.headers.get('Content-Type'),
+      hasUpstreamAuthorization: options.requestHeaders?.Authorization != null,
+      ok: response.ok,
+      sourceURL: summarizeURLForLog(options.sourceURL ?? patchURL),
+      status: response.status,
+      upstreamHost: new URL(patchURL).hostname,
+    })
+  );
 
   if (!response.ok) {
     const status = response.status >= 400 ? response.status : 502;

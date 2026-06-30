@@ -22,17 +22,31 @@ function getCurrentTarget(): ExtensionTarget {
 }
 
 async function syncPatState(): Promise<void> {
-  hasToken = (await extensionStorage.getToken(getCurrentTarget())) !== '';
+  const target = getCurrentTarget();
+  hasToken = (await extensionStorage.getToken(target)) !== '';
+  console.info(
+    '[Diffs Extension] PAT state',
+    JSON.stringify({ hasToken, origin: location.origin, target })
+  );
 }
 
 void syncPatState();
 
 async function redirectForConfig(): Promise<void> {
+  const config = await extensionStorage.getConfig();
   const target = decideDiffshubRedirect({
-    config: await extensionStorage.getConfig(),
+    config,
     href: location.href,
   });
   if (target != null && target !== location.href) {
+    console.info(
+      '[Diffs Extension] redirecting Diffshub target',
+      JSON.stringify({
+        configuredTarget: config.target,
+        currentOrigin: location.origin,
+        nextOrigin: new URL(target).origin,
+      })
+    );
     location.replace(target);
   }
 }
@@ -69,7 +83,20 @@ window.addEventListener('message', (event) => {
       await syncPatState();
     }
 
+    console.info(
+      '[Diffs Extension] bridge request',
+      JSON.stringify({
+        hasToken,
+        sourceUrl: event.data.sourceUrl,
+        target: getCurrentTarget(),
+      })
+    );
+
     if (hasToken !== true) {
+      console.info(
+        '[Diffs Extension] bridge unavailable',
+        JSON.stringify({ target: getCurrentTarget() })
+      );
       window.postMessage(
         {
           id: event.data.id,
@@ -101,7 +128,19 @@ window.addEventListener('message', (event) => {
         } satisfies FetchDiffResponse,
         window.location.origin
       );
+      console.info(
+        '[Diffs Extension] bridge result',
+        JSON.stringify({
+          ok: result.ok === true,
+          status: typeof result.status === 'number' ? result.status : 500,
+          target: getCurrentTarget(),
+        })
+      );
     } catch {
+      console.info(
+        '[Diffs Extension] bridge failed',
+        JSON.stringify({ target: getCurrentTarget() })
+      );
       window.postMessage(
         {
           body: 'Diffs Extension failed to fetch this diff.',

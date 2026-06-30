@@ -63,12 +63,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   void (async () => {
-    const token = await extensionStorage.getToken(getSenderTarget(sender));
+    const target = getSenderTarget(sender);
+    const token = await extensionStorage.getToken(target);
+    console.info(
+      '[Diffs Extension] fetchDiff request',
+      JSON.stringify({
+        hasToken: token.trim() !== '',
+        senderUrl: sender.url,
+        sourceUrl: (message as { sourceUrl: string }).sourceUrl,
+        target,
+      })
+    );
     const result = await fetchGitHubDiff({
       fetch: fetch.bind(globalThis),
       sourceUrl: (message as { sourceUrl: string }).sourceUrl,
       token,
     });
+    console.info(
+      '[Diffs Extension] fetchDiff result',
+      JSON.stringify({ ok: result.ok, status: result.status, target })
+    );
     sendResponse(result);
   })();
   return true;

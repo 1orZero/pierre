@@ -137,6 +137,7 @@ export function githubFetch(
   const token = getStoredGitHubPat();
   const headers = new Headers(init.headers);
   if (token != null && !headers.has('Authorization')) {
+    console.info('[DiffsHub] using website GitHub PAT');
     headers.set('Authorization', `Bearer ${token}`);
   } else if (token == null && !headers.has('Authorization')) {
     const extensionFetch = fetchDiffThroughExtension(input, {
@@ -201,19 +202,27 @@ function fetchDiffThroughExtension(
     return null;
   }
 
+  console.info(
+    '[DiffsHub] trying extension diff bridge',
+    JSON.stringify({ sourceUrl })
+  );
+
   return new Promise<Response>((resolve, reject) => {
     const id = crypto.randomUUID();
     const ackTimeout = window.setTimeout(() => {
       cleanup();
+      console.info('[DiffsHub] extension bridge did not ack');
       resolve(fetch(input, init));
     }, DIFFS_EXTENSION_ACK_TIMEOUT_MS);
     const timeout = window.setTimeout(() => {
       cleanup();
+      console.info('[DiffsHub] extension bridge timed out');
       reject(new Error('Diffs Extension did not respond.'));
     }, DIFFS_EXTENSION_FETCH_TIMEOUT_MS);
 
     const abort = () => {
       cleanup();
+      console.info('[DiffsHub] extension bridge aborted');
       reject(new Error('Request aborted.'));
     };
 
@@ -231,11 +240,13 @@ function fetchDiffThroughExtension(
 
       if (isExtensionDiffUnavailable(event.data, id)) {
         cleanup();
+        console.info('[DiffsHub] extension bridge unavailable');
         resolve(fetch(input, init));
         return;
       }
 
       if (isExtensionDiffStarted(event.data, id)) {
+        console.info('[DiffsHub] extension bridge acked');
         window.clearTimeout(ackTimeout);
         return;
       }
@@ -245,6 +256,10 @@ function fetchDiffThroughExtension(
       }
 
       cleanup();
+      console.info(
+        '[DiffsHub] extension bridge result',
+        JSON.stringify({ ok: event.data.ok, status: event.data.status })
+      );
       resolve(
         new Response(event.data.body, {
           headers: { 'Content-Type': 'text/plain' },
