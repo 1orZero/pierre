@@ -1,5 +1,5 @@
 {
   "app_dir": "/",
-  "build_command": "NEXT_PUBLIC_SITE=diffshub bun run docs:build",
-  "start_command": "cd apps/docs && NEXT_PUBLIC_SITE=diffshub bun run start"
+  "build_command": "PATH=\"$PWD/node_modules/.bin:$PWD/apps/diffshub/node_modules/.bin:$PATH\" moon run diffshub:build",
+  "start_command": "cd apps/diffshub && PATH=\"$PWD/node_modules/.bin:$PWD/../../node_modules/.bin:$PATH\" next start -p \"${PORT:-3000}\""
 }
