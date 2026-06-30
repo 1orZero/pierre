@@ -41,6 +41,14 @@ function escapeActive(): boolean {
   }
 }
 
+function clearEscape(): void {
+  try {
+    sessionStorage.removeItem(SKIP_FLAG);
+  } catch {
+    // The next explicit toggle still redirects if sessionStorage is unavailable.
+  }
+}
+
 function loadedViaBackForward(): boolean {
   try {
     const [navigation] = performance.getEntriesByType(
@@ -79,6 +87,12 @@ function onPossibleNavigation(viaHistory: boolean): void {
   lastHref = location.href;
   void redirectIfDiff(viaHistory);
 }
+
+chrome.storage.onChanged.addListener((_changes, areaName) => {
+  if (areaName !== 'sync') return;
+  clearEscape();
+  void redirectIfDiff(false);
+});
 
 for (const eventName of ['turbo:load', 'turbo:render', 'pjax:end']) {
   window.addEventListener(eventName, () => onPossibleNavigation(false), true);

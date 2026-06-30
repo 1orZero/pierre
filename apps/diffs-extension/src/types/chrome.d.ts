@@ -49,9 +49,21 @@ declare global {
     }
 
     namespace commands {
+      interface Command {
+        description?: string;
+        name?: string;
+        shortcut?: string;
+      }
+
       const onCommand: {
         addListener(listener: (command: string) => void): void;
       };
+
+      function getAll(): Promise<Command[]>;
+    }
+
+    namespace tabs {
+      function create(options: { url: string }): Promise<unknown>;
     }
 
     namespace storage {

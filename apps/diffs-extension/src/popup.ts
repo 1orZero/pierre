@@ -8,7 +8,11 @@ const targetSelect = document.getElementById('target') as HTMLSelectElement;
 const tokenInput = document.getElementById('token') as HTMLInputElement;
 const saveButton = document.getElementById('save') as HTMLButtonElement;
 const clearButton = document.getElementById('clear') as HTMLButtonElement;
+const shortcutButton = document.getElementById('shortcut') as HTMLButtonElement;
 const statusText = document.getElementById('status') as HTMLElement;
+const shortcutStatusText = document.getElementById(
+  'shortcut-status'
+) as HTMLElement;
 
 function setStatus(message: string): void {
   statusText.textContent = message;
@@ -16,6 +20,10 @@ function setStatus(message: string): void {
 
 async function load(): Promise<void> {
   const config = await extensionStorage.getConfig();
+  const commands = await chrome.commands.getAll();
+  const toggleCommand = commands.find(
+    (command) => command.name === 'toggle-enabled'
+  );
   enabledInput.checked = config.enabled;
   targetSelect.value = config.target;
   tokenInput.value = '';
@@ -24,6 +32,9 @@ async function load(): Promise<void> {
       TARGET_ORIGINS[config.target]
     }`
   );
+  shortcutStatusText.textContent = toggleCommand?.shortcut
+    ? `Shortcut: ${toggleCommand.shortcut}`
+    : 'Shortcut not set.';
 }
 
 enabledInput.addEventListener('change', () => {
@@ -65,6 +76,10 @@ clearButton.addEventListener('click', () => {
     tokenInput.value = '';
     setStatus('PAT cleared.');
   })();
+});
+
+shortcutButton.addEventListener('click', () => {
+  void chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });
 
 void load();

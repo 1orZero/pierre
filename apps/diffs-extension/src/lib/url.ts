@@ -1,4 +1,4 @@
-import { type ExtensionTarget, TARGET_ORIGINS } from './config';
+import { type ExtensionTarget, SKIP_PARAM, TARGET_ORIGINS } from './config';
 
 const GITHUB_HOST = 'github.com';
 const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
@@ -12,6 +12,7 @@ const COMMIT_PATTERN =
   /^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]{7,40})(?:\.(?:diff|patch))?$/i;
 const COMPARE_PATTERN =
   /^\/([^/]+)\/([^/]+)\/compare\/(.+?)(?:\.(?:diff|patch))?$/;
+const TARGET_ORIGIN_SET = new Set<string>(Object.values(TARGET_ORIGINS));
 
 export function getTargetOrigin(target: ExtensionTarget): string {
   return TARGET_ORIGINS[target];
@@ -44,6 +45,52 @@ export function getDiffshubUrl(
 ): string | null {
   const path = getDiffshubPath(input);
   return path == null ? null : `${options.targetOrigin}${path}`;
+}
+
+export function getGitHubUrlFromDiffshub(
+  input: string,
+  options: { skipExtension?: boolean } = {}
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+
+  if (!TARGET_ORIGIN_SET.has(url.origin) || url.searchParams.has('domain')) {
+    return null;
+  }
+
+  const path = normalizeGitHubPath(url.pathname);
+  if (path == null) return null;
+
+  const githubUrl = new URL(`https://${GITHUB_HOST}${path}`);
+  if (options.skipExtension === true) {
+    githubUrl.searchParams.set(SKIP_PARAM, '1');
+  }
+  return githubUrl.href;
+}
+
+export function getDiffshubUrlFromDiffshub(
+  input: string,
+  options: { targetOrigin: string }
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+
+  if (!TARGET_ORIGIN_SET.has(url.origin) || url.searchParams.has('domain')) {
+    return null;
+  }
+
+  const path = normalizeGitHubPath(url.pathname);
+  if (path == null) return null;
+
+  return `${options.targetOrigin}${path}${url.search}${url.hash}`;
 }
 
 export function normalizeGitHubPath(path: string): string | null {

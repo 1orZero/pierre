@@ -32,8 +32,8 @@
   "commands": {
     "toggle-enabled": {
       "suggested_key": {
-        "default": "Ctrl+Shift+D",
-        "mac": "MacCtrl+Shift+D"
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
       },
       "description": "Toggle Diffs Extension"
     }
