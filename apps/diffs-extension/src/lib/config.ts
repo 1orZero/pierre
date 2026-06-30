@@ -1,6 +1,8 @@
 export const STORAGE_KEYS = {
   config: 'diffs-extension.config',
   token: 'diffs-extension.githubPat',
+  tokenLocal: 'diffs-extension.githubPat.local',
+  tokenProd: 'diffs-extension.githubPat.prod',
 } as const;
 
 export const SKIP_PARAM = 'diffs-extension-skip';

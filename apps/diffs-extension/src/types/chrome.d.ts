@@ -25,7 +25,9 @@ declare global {
     }
 
     namespace runtime {
-      interface MessageSender {}
+      interface MessageSender {
+        url?: string;
+      }
 
       interface OnInstalledDetails {
         reason: string;

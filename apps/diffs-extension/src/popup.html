@@ -54,6 +54,14 @@
         margin-top: 8px;
         color: #555;
       }
+
+      .stored-token {
+        display: block;
+        margin-bottom: 4px;
+        overflow-wrap: anywhere;
+        color: #555;
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
@@ -71,10 +79,18 @@
       <option value="local">Local dev</option>
     </select>
 
-    <label for="token">GitHub PAT</label>
-    <input id="token" type="password" autocomplete="off" />
-    <button id="save" type="button">Save PAT</button>
-    <button id="clear" type="button">Clear PAT</button>
+    <label for="prod-token">Production PAT</label>
+    <code id="prod-token-display" class="stored-token">Not saved</code>
+    <input id="prod-token" type="password" autocomplete="off" />
+    <button id="prod-save" type="button">Save Production PAT</button>
+    <button id="prod-clear" type="button">Clear Production PAT</button>
+
+    <label for="local-token">Dev PAT</label>
+    <code id="local-token-display" class="stored-token">Not saved</code>
+    <input id="local-token" type="password" autocomplete="off" />
+    <button id="local-save" type="button">Save Dev PAT</button>
+    <button id="local-clear" type="button">Clear Dev PAT</button>
+
     <button id="shortcut" type="button">Set Keyboard Shortcut</button>
     <p id="status"></p>
     <p id="shortcut-status"></p>

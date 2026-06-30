@@ -14,15 +14,19 @@ export interface StorageArea {
 }
 
 export interface ExtensionStorage {
-  clearToken(): Promise<void>;
+  clearToken(target: ExtensionTarget): Promise<void>;
   getConfig(): Promise<ExtensionConfig>;
-  getToken(): Promise<string>;
+  getToken(target: ExtensionTarget): Promise<string>;
   setConfig(config: ExtensionConfig): Promise<void>;
-  setToken(token: string): Promise<void>;
+  setToken(target: ExtensionTarget, token: string): Promise<void>;
 }
 
 function normalizeToken(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function getTokenKey(target: ExtensionTarget): string {
+  return target === 'local' ? STORAGE_KEYS.tokenLocal : STORAGE_KEYS.tokenProd;
 }
 
 function normalizeConfig(value: unknown): ExtensionConfig {
@@ -45,27 +49,35 @@ export function createExtensionStorage(areas: {
   sync: StorageArea;
 }): ExtensionStorage {
   return {
-    async clearToken() {
-      await areas.local.remove(STORAGE_KEYS.token);
+    async clearToken(target) {
+      await areas.local.remove(getTokenKey(target));
+      if (target === 'prod') {
+        await areas.local.remove(STORAGE_KEYS.token);
+      }
     },
     async getConfig() {
       const data = await areas.sync.get(STORAGE_KEYS.config);
       return normalizeConfig(data[STORAGE_KEYS.config]);
     },
-    async getToken() {
-      const data = await areas.local.get(STORAGE_KEYS.token);
-      return normalizeToken(data[STORAGE_KEYS.token]);
+    async getToken(target) {
+      const data = await areas.local.get(getTokenKey(target));
+      const token = normalizeToken(data[getTokenKey(target)]);
+      if (token !== '' || target === 'local') return token;
+
+      const legacyData = await areas.local.get(STORAGE_KEYS.token);
+      return normalizeToken(legacyData[STORAGE_KEYS.token]);
     },
     async setConfig(config) {
       await areas.sync.set({ [STORAGE_KEYS.config]: normalizeConfig(config) });
     },
-    async setToken(token) {
+    async setToken(target, token) {
       const normalized = normalizeToken(token);
+      const tokenKey = getTokenKey(target);
       if (normalized === '') {
-        await areas.local.remove(STORAGE_KEYS.token);
+        await areas.local.remove(tokenKey);
         return;
       }
-      await areas.local.set({ [STORAGE_KEYS.token]: normalized });
+      await areas.local.set({ [tokenKey]: normalized });
     },
   };
 }

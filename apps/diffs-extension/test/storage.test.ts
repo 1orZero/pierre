@@ -45,16 +45,30 @@ describe('extension storage', () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test('stores PAT in local storage only', async () => {
+  test('stores separate PATs in local storage only', async () => {
     const { local, storage, sync } = createMemoryStorage();
 
-    await storage.setToken('  github_pat_saved  ');
+    await storage.setToken('prod', '  github_pat_prod  ');
+    await storage.setToken('local', '  github_pat_local  ');
 
-    const token = await storage.getToken();
+    const prodToken = await storage.getToken('prod');
+    const localToken = await storage.getToken('local');
 
-    expect(token).toBe('github_pat_saved');
-    expect(local.values.has('diffs-extension.githubPat')).toBe(true);
-    expect(sync.values.has('diffs-extension.githubPat')).toBe(false);
+    expect(prodToken).toBe('github_pat_prod');
+    expect(localToken).toBe('github_pat_local');
+    expect(local.values.has('diffs-extension.githubPat.prod')).toBe(true);
+    expect(local.values.has('diffs-extension.githubPat.local')).toBe(true);
+    expect(sync.values.has('diffs-extension.githubPat.prod')).toBe(false);
+    expect(sync.values.has('diffs-extension.githubPat.local')).toBe(false);
+  });
+
+  test('clears the legacy PAT when clearing production PAT', async () => {
+    const { local, storage } = createMemoryStorage();
+    local.values.set('diffs-extension.githubPat', 'github_pat_legacy');
+
+    await storage.clearToken('prod');
+
+    expect(await storage.getToken('prod')).toBe('');
   });
 
   test('toggles enabled config', async () => {

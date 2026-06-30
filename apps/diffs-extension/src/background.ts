@@ -1,4 +1,8 @@
-import { STORAGE_KEYS } from './lib/config';
+import {
+  type ExtensionTarget,
+  STORAGE_KEYS,
+  TARGET_ORIGINS,
+} from './lib/config';
 import { fetchGitHubDiff } from './lib/diff-service';
 import { buildDynamicRules, RULE_IDS } from './lib/rules';
 import { getExtensionStorage, toggleEnabled } from './lib/storage';
@@ -21,6 +25,18 @@ async function updateBadge(enabled: boolean): Promise<void> {
   }
 }
 
+function getSenderTarget(
+  sender: chrome.runtime.MessageSender
+): ExtensionTarget {
+  try {
+    return new URL(sender.url ?? '').origin === TARGET_ORIGINS.local
+      ? 'local'
+      : 'prod';
+  } catch {
+    return 'prod';
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void syncRules();
 });
@@ -36,7 +52,7 @@ chrome.commands.onCommand.addListener((command) => {
   void toggleEnabled(extensionStorage).then(() => syncRules());
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (
     message == null ||
     typeof message !== 'object' ||
@@ -47,7 +63,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   void (async () => {
-    const token = await extensionStorage.getToken();
+    const token = await extensionStorage.getToken(getSenderTarget(sender));
     const result = await fetchGitHubDiff({
       fetch: fetch.bind(globalThis),
       sourceUrl: (message as { sourceUrl: string }).sourceUrl,

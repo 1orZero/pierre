@@ -1,4 +1,9 @@
-import { SKIP_PARAM, STORAGE_KEYS } from './lib/config';
+import {
+  type ExtensionTarget,
+  SKIP_PARAM,
+  STORAGE_KEYS,
+  TARGET_ORIGINS,
+} from './lib/config';
 import { decideDiffshubRedirect } from './lib/diffshub-redirect';
 import {
   BRIDGE_TAG,
@@ -12,10 +17,12 @@ import { getExtensionStorage } from './lib/storage';
 const extensionStorage = getExtensionStorage();
 let hasToken: boolean | undefined;
 
+function getCurrentTarget(): ExtensionTarget {
+  return location.origin === TARGET_ORIGINS.local ? 'local' : 'prod';
+}
+
 async function syncPatState(): Promise<void> {
-  const data = await chrome.storage.local.get(STORAGE_KEYS.token);
-  const token = data[STORAGE_KEYS.token];
-  hasToken = typeof token === 'string' && token.trim() !== '';
+  hasToken = (await extensionStorage.getToken(getCurrentTarget())) !== '';
 }
 
 void syncPatState();
@@ -31,7 +38,12 @@ async function redirectForConfig(): Promise<void> {
 }
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && changes[STORAGE_KEYS.token] != null) {
+  if (
+    areaName === 'local' &&
+    (changes[STORAGE_KEYS.token] != null ||
+      changes[STORAGE_KEYS.tokenProd] != null ||
+      changes[STORAGE_KEYS.tokenLocal] != null)
+  ) {
     void syncPatState();
   }
   if (areaName === 'sync' && changes[STORAGE_KEYS.config] != null) {
