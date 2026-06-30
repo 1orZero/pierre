@@ -134,18 +134,13 @@ export function githubFetch(
   input: Parameters<typeof fetch>[0],
   init: RequestInit = {}
 ): Promise<Response> {
-  const token = getStoredGitHubPat();
   const headers = new Headers(init.headers);
-  if (token != null && !headers.has('Authorization')) {
-    console.info('[DiffsHub] using website GitHub PAT');
-    headers.set('Authorization', `Bearer ${token}`);
-  } else if (token == null && !headers.has('Authorization')) {
-    const extensionFetch = fetchDiffThroughExtension(input, {
-      ...init,
-      headers,
-    });
-    if (extensionFetch != null) return extensionFetch;
-  }
+  headers.delete('Authorization');
+  const extensionFetch = fetchDiffThroughExtension(input, {
+    ...init,
+    headers,
+  });
+  if (extensionFetch != null) return extensionFetch;
   return fetch(input, { ...init, headers });
 }
 
