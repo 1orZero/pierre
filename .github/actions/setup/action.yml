@@ -1,0 +1,49 @@
+name: Set up moon and caches
+description: >-
+  Install the proto-pinned toolchain (.prototools is the single source of truth
+  for bun, pnpm, node, and moon versions) and mount Blacksmith sticky disks for
+  everything cacheable: the proto toolchain, pnpm's store, and moon's workspace
+  cache. moon installs workspace dependencies itself with pnpm and a frozen
+  lockfile when a task requires them, so there is no explicit install step.
+
+runs:
+  using: composite
+  steps:
+    # Sticky disks restore in seconds and persist per-key across runs, which
+    # is what makes moon's local cache behave like a warm remote cache in CI.
+    - name: Mount proto toolchain cache
+      uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
+      with:
+        key: ${{ github.repository }}-proto-${{ runner.os }}
+        path: ~/.proto
+
+    - name: Mount pnpm store cache
+      uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
+      with:
+        key: ${{ github.repository }}-pnpm-store-${{ runner.os }}
+        path: ~/.local/share/pnpm/store
+
+    # Persist only the portable parts of moon's cache: moon documents
+    # `hashes` and `outputs` as safe to share between environments, while
+    # `states` holds machine-specific run state that must be rebuilt per run.
+    - name: Mount moon hash cache
+      uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
+      with:
+        key: ${{ github.repository }}-moon-hashes-${{ runner.os }}
+        path: ${{ github.workspace }}/.moon/cache/hashes
+
+    - name: Mount moon output cache
+      uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
+      with:
+        key: ${{ github.repository }}-moon-outputs-${{ runner.os }}
+        path: ${{ github.workspace }}/.moon/cache/outputs
+
+    # Installs proto, then `proto install` provisions every tool pinned in
+    # .prototools (bun runtime, pnpm package manager, node, moon, gh). The
+    # action's own actions/cache layer is disabled because the sticky disk above
+    # already owns ~/.proto.
+    - name: Install proto and moon
+      uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+      with:
+        auto-install: true
+        cache: false

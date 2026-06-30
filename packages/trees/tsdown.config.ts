@@ -2,7 +2,7 @@ import autoprefixer from 'autoprefixer';
 import postcss from 'postcss';
 import { defineConfig, type UserConfig } from 'tsdown';
 
-const config: UserConfig = defineConfig([
+const config: UserConfig[] = defineConfig([
   {
     entry: ['src/**/*.ts', 'src/**/*.tsx'],
     loader: {
@@ -17,7 +17,7 @@ const config: UserConfig = defineConfig([
     },
     unbundle: true,
     platform: 'neutral',
-    noExternal: ['@pierre/path-store'],
+    noExternal: ['@pierre/path-store', '@pierre/theming'],
     plugins: [
       {
         name: 'postcss-autoprefixer',

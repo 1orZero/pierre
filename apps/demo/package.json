@@ -2,20 +2,8 @@
   "name": "@pierre/demo",
   "version": "0.0.0",
   "private": true,
+  "license": "apache-2.0",
   "type": "module",
-  "scripts": {
-    "build": "bun run build:deps && vite build",
-    "build:deps": "bun run build:deps:diffs",
-    "build:deps:diffs": "output=$(cd ../../packages/diffs && bun run build 2>&1) && echo '[diffs] Successfully cleaned and built.' || (echo \"$output\" >&2 && exit 1)",
-    "build-types": "bun run build:deps && tsgo --build",
-    "dev": "bun run build:deps && concurrently \"bun run dev:deps:diffs\" \"bun run dev:vite\" --names \"diffs,vite\" --prefix-colors \"blue,green\"",
-    "dev:deps:diffs": "(cd ../../packages/diffs && bun run dev)",
-    "dev:vite": "vite --host --clearScreen=false",
-    "preview": "vite preview",
-    "start": "vite preview",
-    "prod": "bun run build && bun run start",
-    "tsc": "bun run build:deps && tsgo --noEmit --pretty"
-  },
   "dependencies": {
     "@pierre/diffs": "workspace:*",
     "react": "catalog:",
@@ -26,7 +14,6 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "concurrently": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
   }

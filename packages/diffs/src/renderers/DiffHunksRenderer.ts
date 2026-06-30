@@ -58,12 +58,19 @@ import {
   createGutterWrapper,
   createHastElement,
 } from '../utils/hast_utils';
+import {
+  FILE_ANNOTATION_HUNK_INDEX,
+  FILE_ANNOTATION_LINE_INDEX,
+  getFileAnnotations,
+  shouldRenderFileAnnotations,
+} from '../utils/includesFileAnnotations';
 import { isDefaultRenderRange } from '../utils/isDefaultRenderRange';
 import { isDiffPlainText } from '../utils/isDiffPlainText';
 import type { DiffLineMetadata } from '../utils/iterateOverDiff';
 import { iterateOverDiff } from '../utils/iterateOverDiff';
 import { renderDiffWithHighlighter } from '../utils/renderDiffWithHighlighter';
 import { shouldUseTokenTransformer } from '../utils/shouldUseTokenTransformer';
+import { getTrailingContextRangeSize } from '../utils/virtualDiffLayout';
 import type { WorkerPoolManager } from '../worker';
 
 interface PushLineWithAnnotation {
@@ -235,10 +242,14 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   public recycle(): void {
     this.highlighter = undefined;
     this.diff = undefined;
-    this.renderCache = undefined;
+    this.clearRenderCache();
     this.additionAnnotations = {};
     this.deletionAnnotations = {};
     this.workerManager?.cleanUpTasks(this);
+  }
+
+  public clearRenderCache(): void {
+    this.renderCache = undefined;
   }
 
   public setOptions(options: DiffHunksRendererOptions): void {
@@ -270,7 +281,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     // NOTE(amadeus): If our render cache is not highlighted, we need to clear
     // it, otherwise we won't have the correct AST lines
     if (this.renderCache?.highlighted !== true) {
-      this.renderCache = undefined;
+      this.clearRenderCache();
     }
     this.expandedHunks.set(index, region);
   }
@@ -322,9 +333,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     };
   }
 
-  protected createAnnotationElement(span: AnnotationSpan): HASTElement {
+  private createAnnotationElement = (span: AnnotationSpan): HASTElement => {
     return createDefaultAnnotationElement(span);
-  }
+  };
 
   // Unified hook returns extra rows that render before/after the current line.
   declare protected getUnifiedInjectedRowsForLine?: (
@@ -770,7 +781,10 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
         }
       },
     };
-    const trailingRangeSize = calculateTrailingRangeSize(fileDiff);
+    const trailingRangeSize = getTrailingContextRangeSize({
+      fileDiff,
+      errorPrefix: 'DiffHunksRenderer.processDiffResult',
+    });
     const pendingSplitContext: PendingSplitContext = {
       size: 0,
       side: undefined,
@@ -826,6 +840,8 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
         pushSeparator('additions', props, context);
       }
     }
+
+    this.pushFileLevelAnnotations(fileDiff, diffStyle, renderRange, context);
 
     iterateOverDiff({
       diff: fileDiff,
@@ -1076,9 +1092,24 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
           }
         }
 
-        const noEOFCRDeletion = deletionLine?.noEOFCR ?? false;
-        const noEOFCRAddition = additionLine?.noEOFCR ?? false;
+        const isFinalSplitHunkRow =
+          diffStyle === 'split' &&
+          hunk != null &&
+          splitLineIndex === hunk.splitLineStart + hunk.splitLineCount - 1;
+        const splitNoEOFCRDeletion = isFinalSplitHunkRow
+          ? hunk.noEOFCRDeletions
+          : false;
+        const splitNoEOFCRAddition = isFinalSplitHunkRow
+          ? hunk.noEOFCRAdditions
+          : false;
+        const noEOFCRDeletion =
+          (deletionLine?.noEOFCR ?? false) || splitNoEOFCRDeletion;
+        const noEOFCRAddition =
+          (additionLine?.noEOFCR ?? false) || splitNoEOFCRAddition;
         if (noEOFCRAddition || noEOFCRDeletion) {
+          if (diffStyle === 'split') {
+            pendingSplitContext.flush();
+          }
           if (noEOFCRDeletion) {
             const noEOFType =
               type === 'context' || type === 'context-expanded'
@@ -1322,6 +1353,71 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     );
   }
 
+  private pushFileLevelAnnotations(
+    fileDiff: FileDiffMetadata,
+    diffStyle: 'unified' | 'split',
+    renderRange: RenderRange,
+    context: ProcessContext
+  ): void {
+    if (!shouldRenderFileAnnotations(renderRange)) {
+      return;
+    }
+
+    const deletionAnnotationNames =
+      fileDiff.type !== 'new'
+        ? getAnnotationNames(getFileAnnotations(this.deletionAnnotations))
+        : [];
+    const additionAnnotationNames =
+      fileDiff.type !== 'deleted'
+        ? getAnnotationNames(getFileAnnotations(this.additionAnnotations))
+        : [];
+    if (
+      deletionAnnotationNames.length === 0 &&
+      additionAnnotationNames.length === 0
+    ) {
+      return;
+    }
+
+    const hunkIndex = FILE_ANNOTATION_HUNK_INDEX;
+    const lineIndex = FILE_ANNOTATION_LINE_INDEX;
+    const { createAnnotationElement } = this;
+
+    if (diffStyle === 'unified') {
+      pushLineWithAnnotation({
+        diffStyle,
+        type: 'context',
+        unifiedSpan: {
+          type: 'annotation',
+          hunkIndex,
+          lineIndex,
+          annotations: deletionAnnotationNames.concat(additionAnnotationNames),
+        },
+        createAnnotationElement,
+        context,
+      });
+      return;
+    }
+
+    pushLineWithAnnotation({
+      diffStyle,
+      type: 'context',
+      deletionSpan: {
+        type: 'annotation',
+        hunkIndex,
+        lineIndex,
+        annotations: deletionAnnotationNames,
+      },
+      additionSpan: {
+        type: 'annotation',
+        hunkIndex,
+        lineIndex,
+        annotations: additionAnnotationNames,
+      },
+      createAnnotationElement,
+      context,
+    });
+  }
+
   private getAnnotations(
     type: 'unified',
     deletionLineNumber: number | undefined,
@@ -1395,8 +1491,21 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   }
 }
 
+function getAnnotationNames<LAnnotation>(
+  annotations: DiffLineAnnotation<LAnnotation>[] | undefined
+): string[] {
+  return (
+    annotations?.map((annotation) => getLineAnnotationName(annotation)) ?? []
+  );
+}
+
+// Use the platform's English plural rules to pick "line" vs "lines" so a
+// count of 0 reads as "0 unmodified lines". en-US returns "one" only for 1.
+const EN_PLURAL_RULES = new Intl.PluralRules('en-US');
+
 function getModifiedLinesString(lines: number) {
-  return `${lines} unmodified line${lines > 1 ? 's' : ''}`;
+  const suffix = EN_PLURAL_RULES.select(lines) === 'one' ? '' : 's';
+  return `${lines} unmodified line${suffix}`;
 }
 
 function pushUnifiedInjectedRows(
@@ -1653,28 +1762,4 @@ function isDiffMassive(
     Math.max(diff.additionLines.length, diff.deletionLines.length) >
     tokenizeMaxLength
   );
-}
-
-function calculateTrailingRangeSize(fileDiff: FileDiffMetadata): number {
-  const lastHunk = fileDiff.hunks.at(-1);
-  if (
-    lastHunk == null ||
-    fileDiff.isPartial ||
-    fileDiff.additionLines.length === 0 ||
-    fileDiff.deletionLines.length === 0
-  ) {
-    return 0;
-  }
-  const additionRemaining =
-    fileDiff.additionLines.length -
-    (lastHunk.additionLineIndex + lastHunk.additionCount);
-  const deletionRemaining =
-    fileDiff.deletionLines.length -
-    (lastHunk.deletionLineIndex + lastHunk.deletionCount);
-  if (additionRemaining !== deletionRemaining) {
-    throw new Error(
-      `DiffHunksRenderer.processDiffResult: trailing context mismatch (additions=${additionRemaining}, deletions=${deletionRemaining}) for ${fileDiff.name}`
-    );
-  }
-  return Math.min(additionRemaining, deletionRemaining);
 }

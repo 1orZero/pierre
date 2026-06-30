@@ -1,105 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { JSDOM } from 'jsdom';
 
 import { InteractionManager } from '../src/managers/InteractionManager';
 import type { SelectedLineRange } from '../src/types';
-
-function installDom() {
-  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-    url: 'http://localhost',
-  });
-  const originalValues = {
-    cancelAnimationFrame: Reflect.get(globalThis, 'cancelAnimationFrame'),
-    document: Reflect.get(globalThis, 'document'),
-    Element: Reflect.get(globalThis, 'Element'),
-    Event: Reflect.get(globalThis, 'Event'),
-    HTMLButtonElement: Reflect.get(globalThis, 'HTMLButtonElement'),
-    HTMLDivElement: Reflect.get(globalThis, 'HTMLDivElement'),
-    HTMLElement: Reflect.get(globalThis, 'HTMLElement'),
-    MouseEvent: Reflect.get(globalThis, 'MouseEvent'),
-    Node: Reflect.get(globalThis, 'Node'),
-    PointerEvent: Reflect.get(globalThis, 'PointerEvent'),
-    requestAnimationFrame: Reflect.get(globalThis, 'requestAnimationFrame'),
-    window: Reflect.get(globalThis, 'window'),
-  };
-
-  class MockPointerEvent extends dom.window.MouseEvent {
-    pointerId: number;
-    pointerType: string;
-
-    constructor(type: string, init: PointerEventInit = {}) {
-      super(type, {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        ...init,
-      });
-      this.pointerId = init.pointerId ?? 1;
-      this.pointerType = init.pointerType ?? 'mouse';
-    }
-  }
-
-  let nextFrameId = 0;
-  const frames = new Map<number, ReturnType<typeof setTimeout>>();
-  const pointTargets = new Map<string, Element>();
-
-  Object.defineProperty(dom.window.document, 'elementFromPoint', {
-    configurable: true,
-    value: (x: number, y: number): Element | null =>
-      pointTargets.get(`${x},${y}`) ?? null,
-  });
-
-  Object.assign(globalThis, {
-    cancelAnimationFrame: ((id: number) => {
-      const timeout = frames.get(id);
-      if (timeout != null) {
-        clearTimeout(timeout);
-        frames.delete(id);
-      }
-    }) as typeof cancelAnimationFrame,
-    document: dom.window.document,
-    Element: dom.window.Element,
-    Event: dom.window.Event,
-    HTMLButtonElement: dom.window.HTMLButtonElement,
-    HTMLDivElement: dom.window.HTMLDivElement,
-    HTMLElement: dom.window.HTMLElement,
-    MouseEvent: dom.window.MouseEvent,
-    Node: dom.window.Node,
-    PointerEvent: MockPointerEvent,
-    requestAnimationFrame: ((callback: FrameRequestCallback) => {
-      const id = ++nextFrameId;
-      const timeout = setTimeout(() => {
-        frames.delete(id);
-        callback(performance.now());
-      }, 0);
-      frames.set(id, timeout);
-      return id;
-    }) as typeof requestAnimationFrame,
-    window: dom.window,
-  });
-  Object.assign(dom.window, { PointerEvent: MockPointerEvent });
-
-  return {
-    setElementFromPoint(x: number, y: number, element: Element): void {
-      pointTargets.set(`${x},${y}`, element);
-    },
-    cleanup() {
-      for (const timeout of frames.values()) {
-        clearTimeout(timeout);
-      }
-      frames.clear();
-
-      for (const [key, value] of Object.entries(originalValues)) {
-        if (value === undefined) {
-          Reflect.deleteProperty(globalThis, key);
-        } else {
-          Object.assign(globalThis, { [key]: value });
-        }
-      }
-      dom.window.close();
-    },
-  };
-}
+import { installDom } from './domHarness';
 
 interface FilePreFixture {
   contentRows: HTMLDivElement[];
@@ -142,6 +45,35 @@ function createFilePre(lineCount: number): FilePreFixture {
   document.body.appendChild(pre);
 
   return { contentRows, gutterRows, pre };
+}
+
+function prependLineZeroRow(fixture: FilePreFixture): void {
+  const code = fixture.pre.querySelector('[data-code]');
+  const gutter = fixture.pre.querySelector('[data-gutter]');
+  const content = fixture.pre.querySelector('[data-content]');
+  if (!(code instanceof HTMLDivElement)) {
+    throw new Error('missing code element');
+  }
+  if (!(gutter instanceof HTMLDivElement)) {
+    throw new Error('missing gutter element');
+  }
+  if (!(content instanceof HTMLDivElement)) {
+    throw new Error('missing content element');
+  }
+
+  const gutterRow = document.createElement('div');
+  gutterRow.setAttribute('data-column-number', '0');
+  gutterRow.setAttribute('data-line-index', '-1');
+  gutterRow.setAttribute('data-line-type', 'context');
+
+  const contentRow = document.createElement('div');
+  contentRow.setAttribute('data-line', '0');
+  contentRow.setAttribute('data-line-index', '-1');
+  contentRow.setAttribute('data-line-type', 'context');
+  contentRow.textContent = 'line 0';
+
+  gutter.prepend(gutterRow);
+  content.prepend(contentRow);
 }
 
 function createAnnotationRowAfter(
@@ -513,6 +445,54 @@ describe('InteractionManager gutter utility', () => {
       expect(
         gutterRows[2].querySelector('[data-gutter-utility-slot]')
       ).not.toBe(null);
+    } finally {
+      manager.cleanUp();
+      cleanup();
+    }
+  });
+
+  test('normal touch line selection ignores slotted file-level annotation content', () => {
+    const { cleanup, setElementFromPoint } = installDom();
+    const manager = new InteractionManager('file', {
+      enableGutterUtility: true,
+      enableLineSelection: true,
+    });
+    try {
+      const fixture = createFilePre(4);
+      prependLineZeroRow(fixture);
+      const { gutterRows, pre } = fixture;
+      const annotationSlotContent = document.createElement('div');
+      annotationSlotContent.slot = 'annotation-0';
+      const annotationButton = document.createElement('button');
+      annotationButton.type = 'button';
+      annotationSlotContent.appendChild(annotationButton);
+      document.body.appendChild(annotationSlotContent);
+      manager.setup(pre);
+      setElementFromPoint(8, 80, gutterRows[3]);
+      setElementFromPoint(80, 60, annotationButton);
+
+      dispatchPointer(gutterRows[0], 'pointerdown', {
+        clientX: 8,
+        clientY: 20,
+        pointerId: 18,
+        pointerType: 'touch',
+      });
+      dispatchPointer(gutterRows[0], 'pointermove', {
+        clientX: 8,
+        clientY: 80,
+        pointerId: 18,
+        pointerType: 'touch',
+      });
+      expect(manager.getSelection()).toEqual({ start: 1, end: 4 });
+
+      dispatchPointer(gutterRows[0], 'pointermove', {
+        clientX: 80,
+        clientY: 60,
+        pointerId: 18,
+        pointerType: 'touch',
+      });
+
+      expect(manager.getSelection()).toEqual({ start: 1, end: 4 });
     } finally {
       manager.cleanUp();
       cleanup();

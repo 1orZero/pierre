@@ -1,89 +1,37 @@
 import { describe, expect, test } from 'bun:test';
-import { JSDOM } from 'jsdom';
 
 import { CodeView } from '../src/components/CodeView';
 import { DEFAULT_CODE_VIEW_LAYOUT } from '../src/constants';
 import type { CodeViewItem, FileContents } from '../src/types';
 import { parseDiffFromFile } from '../src/utils/parseDiffFromFile';
+import {
+  dispatchScroll,
+  installDom,
+  makeFile,
+  makeFileItem,
+  renderItems,
+  wait,
+} from './domHarness';
 
 const ROOT_HEIGHT = 800;
 
-function installDom() {
-  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-    url: 'http://localhost',
-  });
-  const originalValues = {
-    cancelAnimationFrame: Reflect.get(globalThis, 'cancelAnimationFrame'),
-    document: Reflect.get(globalThis, 'document'),
-    DocumentFragment: Reflect.get(globalThis, 'DocumentFragment'),
-    Element: Reflect.get(globalThis, 'Element'),
-    HTMLDivElement: Reflect.get(globalThis, 'HTMLDivElement'),
-    HTMLElement: Reflect.get(globalThis, 'HTMLElement'),
-    HTMLPreElement: Reflect.get(globalThis, 'HTMLPreElement'),
-    Node: Reflect.get(globalThis, 'Node'),
-    requestAnimationFrame: Reflect.get(globalThis, 'requestAnimationFrame'),
-    ResizeObserver: Reflect.get(globalThis, 'ResizeObserver'),
-    SVGElement: Reflect.get(globalThis, 'SVGElement'),
-    window: Reflect.get(globalThis, 'window'),
-  };
+// Test-local mirrors of the private scroll rebase tuning constants of the same
+// names in src/components/CodeView.ts. If the source constants are retuned,
+// update these mirrors to match.
+const SCROLL_REBASE_CONTAINER_HEIGHT = 12_000_000;
+const SCROLL_REBASE_TRIGGER_TOP = 1_000_000;
+const SCROLL_REBASE_TARGET_TOP = 2_000_000;
+// Paged scrollTop above which CodeView rebases the DOM scroll window, derived
+// the same way as SCROLL_REBASE_THRESHOLD in src/components/CodeView.ts.
+const SCROLL_REBASE_THRESHOLD =
+  SCROLL_REBASE_CONTAINER_HEIGHT - SCROLL_REBASE_TRIGGER_TOP;
+// Logical scroll position slightly past the rebase threshold, so scrolling or
+// jumping to it forces a rebase.
+const PAST_REBASE_SCROLL_TOP = SCROLL_REBASE_THRESHOLD + 100_000;
 
-  class MockResizeObserver {
-    observe(_target: Element): void {}
-    unobserve(_target: Element): void {}
-    disconnect(): void {}
-  }
-
-  let nextFrameId = 0;
-  const frames = new Map<number, ReturnType<typeof setTimeout>>();
-
-  Object.assign(globalThis, {
-    cancelAnimationFrame: ((id: number) => {
-      const timeout = frames.get(id);
-      if (timeout != null) {
-        clearTimeout(timeout);
-        frames.delete(id);
-      }
-    }) as typeof cancelAnimationFrame,
-    document: dom.window.document,
-    DocumentFragment: dom.window.DocumentFragment,
-    Element: dom.window.Element,
-    HTMLDivElement: dom.window.HTMLDivElement,
-    HTMLElement: dom.window.HTMLElement,
-    HTMLPreElement: dom.window.HTMLPreElement,
-    Node: dom.window.Node,
-    requestAnimationFrame: ((callback: FrameRequestCallback) => {
-      const id = ++nextFrameId;
-      const timeout = setTimeout(() => {
-        frames.delete(id);
-        callback(performance.now());
-      }, 0);
-      frames.set(id, timeout);
-      return id;
-    }) as typeof requestAnimationFrame,
-    ResizeObserver: MockResizeObserver,
-    SVGElement: dom.window.SVGElement,
-    window: dom.window,
-  });
-
-  return {
-    cleanup() {
-      for (const timeout of frames.values()) {
-        clearTimeout(timeout);
-      }
-      frames.clear();
-
-      for (const [key, value] of Object.entries(originalValues)) {
-        if (value === undefined) {
-          Reflect.deleteProperty(globalThis, key);
-        } else {
-          Object.assign(globalThis, { [key]: value });
-        }
-      }
-      dom.window.close();
-    },
-  };
-}
-
+// Unlike the shared createRoot, this root clamps scrollTop writes to the
+// container's current max scroll range, mimicking real browser behavior so
+// rebase/anchoring logic can be exercised.
 function createClampingRoot(): HTMLDivElement {
   const root = document.createElement('div');
   root.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
@@ -128,37 +76,11 @@ function getRootMaxScrollTop(root: HTMLElement): number {
   return Math.max(contentHeight + marginTop + marginBottom - ROOT_HEIGHT, 0);
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function dispatchScroll(root: HTMLElement): void {
-  root.dispatchEvent(new window.Event('scroll'));
-}
-
 function getScrollToTop(
   options?: ScrollToOptions | number,
   y?: number
 ): number {
   return typeof options === 'number' ? (y ?? 0) : (options?.top ?? 0);
-}
-
-function makeFile(name: string, lineCount: number): FileContents {
-  return {
-    name,
-    contents: Array.from(
-      { length: lineCount },
-      (_, index) => `line ${index + 1}`
-    ).join('\n'),
-  };
-}
-
-function makeFileItem(id: string, lineCount: number): CodeViewItem<undefined> {
-  return {
-    id,
-    type: 'file',
-    file: makeFile(`${id}.ts`, lineCount),
-  };
 }
 
 function makeReplacementDiffItem(
@@ -179,15 +101,6 @@ function makeReplacementDiffItem(
     type: 'diff',
     fileDiff: parseDiffFromFile(oldFile, newFile),
   };
-}
-
-async function renderItems(
-  viewer: CodeView,
-  items: readonly CodeViewItem[]
-): Promise<void> {
-  viewer.setItems(items);
-  viewer.render(true);
-  await wait(0);
 }
 
 describe('CodeView scroll anchoring', () => {
@@ -249,20 +162,25 @@ describe('CodeView scroll anchoring', () => {
       await renderItems(viewer, items);
 
       expect(viewer.getScrollHeight()).toBeGreaterThan(20_000_000);
-      expect(getRootMaxScrollTop(root)).toBeLessThan(12_000_000);
+      expect(getRootMaxScrollTop(root)).toBeLessThan(
+        SCROLL_REBASE_CONTAINER_HEIGHT
+      );
 
-      root.scrollTop = 11_100_000;
+      root.scrollTop = PAST_REBASE_SCROLL_TOP;
       dispatchScroll(root);
       viewer.render(true);
 
-      expect(viewer.getScrollTop()).toBe(11_100_000);
-      expect(root.scrollTop).toBe(2_000_000);
+      expect(viewer.getScrollTop()).toBe(PAST_REBASE_SCROLL_TOP);
+      expect(root.scrollTop).toBe(SCROLL_REBASE_TARGET_TOP);
 
-      root.scrollTop = 3_000_000;
+      // Scrolling the rebased DOM window by a delta must advance the logical
+      // scroll position by the same delta.
+      const scrollDelta = 1_000_000;
+      root.scrollTop = SCROLL_REBASE_TARGET_TOP + scrollDelta;
       dispatchScroll(root);
       viewer.render(true);
 
-      expect(viewer.getScrollTop()).toBe(12_100_000);
+      expect(viewer.getScrollTop()).toBe(PAST_REBASE_SCROLL_TOP + scrollDelta);
 
       viewer.scrollTo({
         type: 'item',
@@ -310,7 +228,9 @@ describe('CodeView scroll anchoring', () => {
 
       const container = root.firstElementChild;
       expect(container).toBeInstanceOf(HTMLElement);
-      expect((container as HTMLElement).style.height).toBe('12000000px');
+      expect((container as HTMLElement).style.height).toBe(
+        `${SCROLL_REBASE_CONTAINER_HEIGHT}px`
+      );
 
       viewer.setItems([]);
       expect((container as HTMLElement).style.height).toBe('');
@@ -318,8 +238,12 @@ describe('CodeView scroll anchoring', () => {
       await renderItems(viewer, secondItems);
 
       expect(viewer.getScrollHeight()).toBeGreaterThan(20_000_000);
-      expect((container as HTMLElement).style.height).toBe('12000000px');
-      expect(getRootMaxScrollTop(root)).toBeGreaterThan(11_000_000);
+      expect((container as HTMLElement).style.height).toBe(
+        `${SCROLL_REBASE_CONTAINER_HEIGHT}px`
+      );
+      expect(getRootMaxScrollTop(root)).toBeGreaterThan(
+        SCROLL_REBASE_THRESHOLD
+      );
     } finally {
       viewer.cleanUp();
       await wait(0);
@@ -366,15 +290,24 @@ describe('CodeView scroll anchoring', () => {
 
       viewer.scrollTo({
         type: 'position',
-        position: 11_100_000,
+        position: PAST_REBASE_SCROLL_TOP,
         behavior: 'instant',
       });
       viewer.render(true);
 
-      const rebaseWrite = scrollWrites.find((write) => write.top === 2_000_000);
+      const rebaseWrite = scrollWrites.find(
+        (write) => write.top === SCROLL_REBASE_TARGET_TOP
+      );
       expect(rebaseWrite).toBeDefined();
-      expect(rebaseWrite?.spacerHeight).toBeGreaterThan(1_900_000);
-      expect(rebaseWrite?.spacerHeight).toBeLessThan(2_100_000);
+      // The spacer height tracks where the rendered window starts, which must
+      // already sit near the rebase target when the scroll write happens.
+      const spacerTolerance = 100_000;
+      expect(rebaseWrite?.spacerHeight).toBeGreaterThan(
+        SCROLL_REBASE_TARGET_TOP - spacerTolerance
+      );
+      expect(rebaseWrite?.spacerHeight).toBeLessThan(
+        SCROLL_REBASE_TARGET_TOP + spacerTolerance
+      );
     } finally {
       viewer.cleanUp();
       await wait(0);

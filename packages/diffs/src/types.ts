@@ -9,6 +9,7 @@ import type {
   LanguageRegistration,
   ShikiTransformer,
   ThemedToken,
+  ThemeRegistration,
   ThemeRegistrationResolved,
 } from 'shiki';
 
@@ -46,16 +47,13 @@ export type {
   LanguageRegistration,
   ShikiTransformer,
   ThemeRegistrationResolved,
+  ThemeRegistration,
   ThemedToken,
 };
 
-export type DiffsThemeNames =
-  | BundledTheme
-  | 'pierre-dark'
-  | 'pierre-dark-soft'
-  | 'pierre-light'
-  | 'pierre-light-soft'
-  | (string & {});
+// Diffs accepts Shiki's bundled theme names and any additional theme name a
+// consumer registers through the highlighter/theming catalog.
+export type DiffsThemeNames = BundledTheme | (string & {});
 
 export type ThemesType = Record<'dark' | 'light', DiffsThemeNames>;
 
@@ -355,6 +353,8 @@ export type HunkLineType =
 
 export type ThemeTypes = 'system' | 'light' | 'dark';
 
+export type PostRenderPhase = 'mount' | 'update' | 'unmount';
+
 /**
  * The `'custom'` variant is deprecated and will be removed in a future version.
  */
@@ -467,10 +467,18 @@ type OptionalMetadata<T> = T extends undefined
   ? { metadata?: undefined }
   : { metadata: T };
 
+/**
+ * Annotation rendered for a file line. Use `lineNumber: 0` to render a
+ * file-level annotation above the first rendered file line.
+ */
 export type LineAnnotation<T = undefined> = {
   lineNumber: number;
 } & OptionalMetadata<T>;
 
+/**
+ * Annotation rendered for one side of a diff line. Use `lineNumber: 0` to
+ * render a side-specific file-level annotation above the first hunk/separator.
+ */
 export type DiffLineAnnotation<T = undefined> = {
   side: AnnotationSide;
   lineNumber: number;
@@ -787,6 +795,13 @@ export interface VirtualFileMetrics {
   /** Optional bottom padding applied after file content, and only if there is
    * code for the diff. Defaults to spacing if none provided */
   paddingBottom?: number;
+}
+
+export interface PendingCodeViewLayoutReset {
+  metrics?: VirtualFileMetrics;
+  resetFileLayoutCache: boolean;
+  resetDiffLayoutCache: boolean;
+  includeEstimatedDiffHeights: boolean;
 }
 
 export interface CodeViewLayout {

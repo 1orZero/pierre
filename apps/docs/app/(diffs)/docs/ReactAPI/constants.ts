@@ -8,6 +8,64 @@ const options = {
   unsafeCSS: CustomScrollbarCSS,
 } as const;
 
+export const REACT_API_POST_RENDER_LIFECYCLE: PreloadFileOptions<undefined> = {
+  file: {
+    name: 'post_render_lifecycle.tsx',
+    contents: `import { FileDiff } from '@pierre/diffs/react';
+
+const cleanupByNode = new WeakMap<HTMLElement, () => void>();
+
+<FileDiff
+  fileDiff={fileDiff}
+  options={{
+    onPostRender(node, _instance, phase) {
+      if (phase === 'mount') {
+        const selectionRoot = node.shadowRoot ?? node;
+
+        const handleSelectStart = () => {
+          console.log('selection started in diff');
+        };
+
+        const handleSelectionChange = () => {
+          const selection = document.getSelection();
+          if (selection == null || selection.isCollapsed) {
+            return;
+          }
+
+          if (
+            !containsSelectionNode(selectionRoot, selection.anchorNode) &&
+            !containsSelectionNode(selectionRoot, selection.focusNode)
+          ) {
+            return;
+          }
+
+          console.log('selected text', selection.toString());
+        };
+
+        selectionRoot.addEventListener('selectstart', handleSelectStart);
+        document.addEventListener('selectionchange', handleSelectionChange);
+        cleanupByNode.set(node, () => {
+          selectionRoot.removeEventListener('selectstart', handleSelectStart);
+          document.removeEventListener('selectionchange', handleSelectionChange);
+        });
+        return;
+      }
+
+      if (phase === 'unmount') {
+        cleanupByNode.get(node)?.();
+        cleanupByNode.delete(node);
+      }
+    },
+  }}
+/>
+
+function containsSelectionNode(root: Node, node: Node | null) {
+  return node != null && root.contains(node);
+}`,
+  },
+  options,
+};
+
 export const REACT_API_SHARED_DIFF_OPTIONS: PreloadFileOptions<undefined> = {
   file: {
     name: 'shared_diff_options.tsx',
@@ -20,6 +78,7 @@ export const REACT_API_SHARED_DIFF_OPTIONS: PreloadFileOptions<undefined> = {
 import type {
   DiffTokenEventBaseProps,
   FileDiff as FileDiffClass,
+  PostRenderPhase,
 } from '@pierre/diffs';
 import { MultiFileDiff } from '@pierre/diffs/react';
 
@@ -139,12 +198,20 @@ interface DiffOptions {
   // Skip syntax highlighting for lines exceeding this length
   tokenizeMaxLineLength: 1000,
 
-  // Fires after hydration, and after render passes that commit DOM updates.
-  // Those DOM updates may be a full replacement or a partial update.
+  // Fires after hydration, after DOM-committing render updates, and before
+  // mounted DOM is removed. Phase is 'mount' | 'update' | 'unmount'.
   // Receives the outer diffs container element.
-  // Useful when you want to do your own post-render DOM manipulation.
+  // Useful when you want to measure, observe, or clean up DOM-node state.
   // You can access the shadow DOM from here if you need to inspect lines.
-  onPostRender(node: HTMLElement, instance: FileDiffClass) {
+  onPostRender(
+    node: HTMLElement,
+    instance: FileDiffClass,
+    phase: PostRenderPhase
+  ) {
+    if (phase === 'unmount') {
+      return;
+    }
+
     const codeLines = node.shadowRoot?.querySelectorAll('[data-line]');
     console.log('rendered line count', codeLines?.length ?? 0);
   },
@@ -282,7 +349,14 @@ interface ThreadMetadata {
   // Keep annotation arrays stable (useState/useMemo) to avoid re-renders.
   // Annotation metadata can be typed any way you'd like.
   // Multiple annotations can target the same side/line.
+  // Use lineNumber: 0 for a file-level annotation rendered above the first
+  // hunk separator or diff row.
   lineAnnotations={[
+    {
+      side: 'additions',
+      lineNumber: 0,
+      metadata: { threadId: 'file-summary' },
+    },
     {
       side: 'additions', // or 'deletions'
       lineNumber: 16,    // visual line number in the diff
@@ -554,6 +628,8 @@ export function CodeFile() {
       //
       // Key difference: File uses LineAnnotation (no 'side' property)
       // instead of DiffLineAnnotation since there's only one column.
+      // Use lineNumber: 0 for a file-level annotation rendered above the
+      // first file line.
       //
       // See "Shared Props" section above for details on these props.
       // File-specific options exclude diff-only settings like diffStyle,
@@ -568,7 +644,10 @@ export function CodeFile() {
 export const REACT_API_UNRESOLVED_FILE: PreloadFileOptions<undefined> = {
   file: {
     name: 'unresolved_file.tsx',
-    contents: `import type { UnresolvedFile as UnresolvedFileClass } from '@pierre/diffs';
+    contents: `import type {
+  PostRenderPhase,
+  UnresolvedFile as UnresolvedFileClass,
+} from '@pierre/diffs';
 import { UnresolvedFile, type FileContents } from '@pierre/diffs/react';
 import { useState } from 'react';
 
@@ -601,7 +680,15 @@ export function MergeConflictPreview() {
         options={{
           theme: { dark: 'pierre-dark', light: 'pierre-light' },
           diffIndicators: 'none',
-          onPostRender(node: HTMLElement, instance: UnresolvedFileClass) {
+          onPostRender(
+            node: HTMLElement,
+            instance: UnresolvedFileClass,
+            phase: PostRenderPhase
+          ) {
+            if (phase === 'unmount') {
+              return;
+            }
+
             const codeLines = node.shadowRoot?.querySelectorAll(
               '[data-line]'
             );
@@ -687,7 +774,11 @@ export const REACT_API_SHARED_FILE_OPTIONS: PreloadFileOptions<undefined> = {
 // ============================================================
 // Pass these via the \`options\` prop on the File component.
 
-import type { File as FileClass, TokenEventBase } from '@pierre/diffs';
+import type {
+  File as FileClass,
+  PostRenderPhase,
+  TokenEventBase,
+} from '@pierre/diffs';
 import { File } from '@pierre/diffs/react';
 
 <File
@@ -740,12 +831,20 @@ interface FileOptions {
   // Skip syntax highlighting for lines exceeding this length
   tokenizeMaxLineLength: 1000,
 
-  // Fires after hydration, and after render passes that commit DOM updates.
-  // Those DOM updates may be a full replacement or a partial update.
+  // Fires after hydration, after DOM-committing render updates, and before
+  // mounted DOM is removed. Phase is 'mount' | 'update' | 'unmount'.
   // Receives the outer diffs container element.
-  // Useful when you want to do your own post-render DOM manipulation.
+  // Useful when you want to measure, observe, or clean up DOM-node state.
   // You can access the shadow DOM from here if you need to inspect lines.
-  onPostRender(node: HTMLElement, instance: FileClass) {
+  onPostRender(
+    node: HTMLElement,
+    instance: FileClass,
+    phase: PostRenderPhase
+  ) {
+    if (phase === 'unmount') {
+      return;
+    }
+
     const codeLines = node.shadowRoot?.querySelectorAll('[data-line]');
     console.log('rendered line count', codeLines?.length ?? 0);
   },
@@ -884,7 +983,13 @@ interface CommentMetadata {
   //
   // Note: Unlike diff components, File uses LineAnnotation which
   // has no 'side' property since there's only one column.
+  // Use lineNumber: 0 for a file-level annotation rendered above the
+  // first file line.
   lineAnnotations={[
+    {
+      lineNumber: 0,
+      metadata: { commentId: 'file-summary' },
+    },
     {
       lineNumber: 5,    // visual line number in the file
       metadata: { commentId: 'comment-123' },

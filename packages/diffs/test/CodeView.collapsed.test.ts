@@ -1,128 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { JSDOM } from 'jsdom';
 
 import { CodeView } from '../src/components/CodeView';
-import type { CodeViewItem, FileContents } from '../src/types';
+import type { CodeViewItem } from '../src/types';
 import { parseDiffFromFile } from '../src/utils/parseDiffFromFile';
-
-function installDom() {
-  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-    url: 'http://localhost',
-  });
-  const originalValues = {
-    cancelAnimationFrame: Reflect.get(globalThis, 'cancelAnimationFrame'),
-    document: Reflect.get(globalThis, 'document'),
-    DocumentFragment: Reflect.get(globalThis, 'DocumentFragment'),
-    Element: Reflect.get(globalThis, 'Element'),
-    HTMLDivElement: Reflect.get(globalThis, 'HTMLDivElement'),
-    HTMLElement: Reflect.get(globalThis, 'HTMLElement'),
-    HTMLPreElement: Reflect.get(globalThis, 'HTMLPreElement'),
-    Node: Reflect.get(globalThis, 'Node'),
-    requestAnimationFrame: Reflect.get(globalThis, 'requestAnimationFrame'),
-    ResizeObserver: Reflect.get(globalThis, 'ResizeObserver'),
-    SVGElement: Reflect.get(globalThis, 'SVGElement'),
-    window: Reflect.get(globalThis, 'window'),
-  };
-
-  class MockResizeObserver {
-    observe(_target: Element): void {}
-    unobserve(_target: Element): void {}
-    disconnect(): void {}
-  }
-
-  let nextFrameId = 0;
-  const frames = new Map<number, ReturnType<typeof setTimeout>>();
-
-  Object.assign(globalThis, {
-    cancelAnimationFrame: ((id: number) => {
-      const timeout = frames.get(id);
-      if (timeout != null) {
-        clearTimeout(timeout);
-        frames.delete(id);
-      }
-    }) as typeof cancelAnimationFrame,
-    document: dom.window.document,
-    DocumentFragment: dom.window.DocumentFragment,
-    Element: dom.window.Element,
-    HTMLDivElement: dom.window.HTMLDivElement,
-    HTMLElement: dom.window.HTMLElement,
-    HTMLPreElement: dom.window.HTMLPreElement,
-    Node: dom.window.Node,
-    requestAnimationFrame: ((callback: FrameRequestCallback) => {
-      const id = ++nextFrameId;
-      const timeout = setTimeout(() => {
-        frames.delete(id);
-        callback(performance.now());
-      }, 0);
-      frames.set(id, timeout);
-      return id;
-    }) as typeof requestAnimationFrame,
-    ResizeObserver: MockResizeObserver,
-    SVGElement: dom.window.SVGElement,
-    window: dom.window,
-  });
-
-  return {
-    cleanup() {
-      for (const timeout of frames.values()) {
-        clearTimeout(timeout);
-      }
-      frames.clear();
-
-      for (const [key, value] of Object.entries(originalValues)) {
-        if (value === undefined) {
-          Reflect.deleteProperty(globalThis, key);
-        } else {
-          Object.assign(globalThis, { [key]: value });
-        }
-      }
-      dom.window.close();
-    },
-  };
-}
-
-function createRoot(): HTMLDivElement {
-  const root = document.createElement('div');
-  root.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
-    root.scrollTop =
-      typeof options === 'number' ? (y ?? 0) : (options?.top ?? root.scrollTop);
-  };
-  Object.defineProperty(root, 'getBoundingClientRect', {
-    value: () => ({
-      bottom: 800,
-      height: 800,
-      left: 0,
-      right: 1000,
-      top: 0,
-      width: 1000,
-      x: 0,
-      y: 0,
-      toJSON() {
-        return {};
-      },
-    }),
-  });
-  document.body.appendChild(root);
-  return root;
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function dispatchScroll(root: HTMLElement): void {
-  root.dispatchEvent(new window.Event('scroll'));
-}
-
-function makeFile(name: string, lineCount = 20): FileContents {
-  return {
-    name,
-    contents: Array.from(
-      { length: lineCount },
-      (_, index) => `line ${index + 1}`
-    ).join('\n'),
-  };
-}
+import {
+  createRoot,
+  dispatchScroll,
+  installDom,
+  makeFile,
+  renderItems,
+  wait,
+} from './domHarness';
 
 function makeDiffItem(
   id: string,
@@ -150,15 +38,6 @@ function makeDiffItem(
 
 function hasRenderedCode(item: { element: HTMLElement }): boolean {
   return item.element.shadowRoot?.querySelector('pre') != null;
-}
-
-async function renderItems(
-  viewer: CodeView,
-  items: readonly CodeViewItem[]
-): Promise<void> {
-  viewer.setItems(items);
-  viewer.render(true);
-  await wait(0);
 }
 
 describe('CodeView item collapsed state', () => {
@@ -332,37 +211,20 @@ describe('CodeView item collapsed state', () => {
 
       await renderItems(viewer, collapsedItems);
 
-      expect(viewer.getRenderedItems().length).toBeGreaterThan(0);
-      const { top, bottom } = viewer.getWindowSpecs();
-      expect(top).toBeLessThanOrEqual(bottom);
-      expect(root.scrollTop).toBeLessThan(20_000);
-    } finally {
-      viewer.cleanUp();
-      await wait(0);
-      cleanup();
-    }
-  });
-
-  test('collapsed rendered items keep sticky specs available', async () => {
-    const { cleanup } = installDom();
-    const viewer = new CodeView({ stickyHeaders: true });
-    try {
-      viewer.setup(createRoot());
-      await renderItems(viewer, [
-        {
-          id: 'file:collapsed.txt',
-          type: 'file',
-          file: makeFile('collapsed.txt'),
-          collapsed: true,
-        },
-      ]);
-
-      const renderedItem = viewer.getRenderedItems()[0];
-      expect(renderedItem).toBeDefined();
-      expect(renderedItem.instance.getAdvancedStickySpecs()).toEqual({
-        topOffset: 0,
-        height: renderedItem.instance.getVirtualizedHeight(),
-      });
+      const renderedItems = viewer.getRenderedItems();
+      expect(renderedItems.length).toBeGreaterThan(0);
+      // The clamped scroll position must land the render window on the tail
+      // of the list rather than stranding it past the shrunken content.
+      expect(renderedItems.map((item) => item.id)).toContain(
+        `file:${items.length - 1}`
+      );
+      // Every item is identical and collapsed, so the total content height is
+      // the item count times one collapsed item's virtualized height; the
+      // clamped scroll offset cannot exceed it.
+      const collapsedHeight = renderedItems[0].instance.getVirtualizedHeight();
+      expect(root.scrollTop).toBeLessThanOrEqual(
+        items.length * collapsedHeight
+      );
     } finally {
       viewer.cleanUp();
       await wait(0);

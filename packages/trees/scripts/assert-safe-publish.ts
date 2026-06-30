@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-// Direct `bun publish` would upload a package.json that still depends on the
+// Direct `pnpm publish` would upload a package.json that still depends on the
 // private workspace package. The release script removes that dependency from the
 // final tarball before publishing.
 const pkgPath = resolve(import.meta.dir, '..', 'package.json');
@@ -13,7 +13,7 @@ if (pathStoreVersion != null) {
     [
       'Direct publish is disabled for @pierre/trees.',
       `package.json still depends on @pierre/path-store (${pathStoreVersion}), which is not published to npm.`,
-      'Use `bun run publish-package -- --tag=beta` so the release script can publish the rewritten package.',
+      'Use `moonx trees:publish -- --tag=beta` so the release script can publish the rewritten package.',
     ].join('\n')
   );
   process.exit(1);

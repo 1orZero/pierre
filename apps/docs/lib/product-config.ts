@@ -1,4 +1,4 @@
-export type ProductId = 'diffs' | 'trees' | 'diffshub';
+export type ProductId = 'diffs' | 'trees';
 
 export interface ProductConfig {
   id: ProductId;
@@ -16,7 +16,6 @@ export interface ProductConfig {
 
 const siteProduct = process.env.NEXT_PUBLIC_SITE ?? 'diffs';
 const isTrees = siteProduct === 'trees';
-const isDiffshub = siteProduct === 'diffshub';
 
 export const PRODUCTS: Record<ProductId, ProductConfig> = {
   diffs: {
@@ -31,7 +30,7 @@ export const PRODUCTS: Record<ProductId, ProductConfig> = {
     docsPath: '/docs',
     themePath: '/theme',
     packageName: '@pierre/diffs',
-    installCommand: 'bun i @pierre/diffs',
+    installCommand: 'pnpm add @pierre/diffs',
     githubUrl: 'https://github.com/pierrecomputer/pierre',
   },
   trees: {
@@ -45,22 +44,7 @@ export const PRODUCTS: Record<ProductId, ProductConfig> = {
     basePath: '',
     docsPath: '/docs',
     packageName: '@pierre/trees',
-    installCommand: 'bun i @pierre/trees',
-    githubUrl: 'https://github.com/pierrecomputer/pierre',
-  },
-  // Stub microsite. No package or docs yet.
-  diffshub: {
-    id: 'diffshub',
-    name: 'DiffsHub',
-    tagline: 'Faster diffs for GitHub URLs',
-    description:
-      'View code changes from any public GitHub diff or patch URL with a super-freaking-fast, beautiful, and virtualized interface.',
-    llmsDescription:
-      'A demo app from The Pierre Computer Company, built with @pierre/diffs and @pierre/trees and enhanced by the new CodeView component.',
-    basePath: '',
-    docsPath: '/',
-    packageName: '',
-    installCommand: '',
+    installCommand: 'pnpm add @pierre/trees',
     githubUrl: 'https://github.com/pierrecomputer/pierre',
   },
 };
@@ -69,7 +53,6 @@ export const PRODUCTS: Record<ProductId, ProductConfig> = {
 const EXTERNAL_URLS: Record<ProductId, string> = {
   diffs: 'https://diffs.com',
   trees: 'https://trees.software',
-  diffshub: 'https://diffs.veraze.io',
 };
 
 /**
@@ -91,12 +74,11 @@ export function getProductConfig(productId: ProductId): ProductConfig {
 }
 
 /**
- * Determine which product we're in. With diffs, trees, and diffshub split
- * into separate sites (selected by NEXT_PUBLIC_SITE), every page in a build
- * belongs to a single product, so the pathname is unused.
+ * Determine which product we're in. With diffs and trees split into separate
+ * sites (selected by NEXT_PUBLIC_SITE), every page in a build belongs to a
+ * single product, so the pathname is unused.
  */
 export function getProductFromPathname(_pathname: string): ProductConfig {
-  if (isDiffshub) return PRODUCTS.diffshub;
   if (isTrees) return PRODUCTS.trees;
   return PRODUCTS.diffs;
 }

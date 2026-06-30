@@ -11,9 +11,6 @@ import {
 import localFont from 'next/font/local';
 
 import './globals.css';
-import { Fragment } from 'react';
-
-import { WorkerPoolContext } from './(diffs)/_components/WorkerPoolContext';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
 import { ThemeProvider } from '@/components/theme-provider';
@@ -62,10 +59,10 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   userScalable: false,
-  ...(process.env.NEXT_PUBLIC_SITE === 'diffshub' && {
-    maximumScale: 1,
-    viewportFit: 'cover',
-  }),
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#252525' },
+  ],
 };
 
 // When running in a worktree, prefix the title with a stable emoji + slug so
@@ -104,12 +101,10 @@ const SITE_PRODUCT = PRODUCTS[SITE];
 const PROD_ORIGIN_BY_SITE: Record<ProductId, string> = {
   diffs: 'https://diffs.com',
   trees: 'https://trees.software',
-  diffshub: 'https://diffs.veraze.io',
 };
 const DEV_PORT_BY_SITE: Record<ProductId, string> = {
   diffs: '3690',
   trees: '3691',
-  diffshub: '3692',
 };
 const PROD_ORIGIN = PROD_ORIGIN_BY_SITE[SITE];
 // In dev, point `metadataBase` at localhost so OG previewers fetch
@@ -123,35 +118,26 @@ const description = SITE_PRODUCT.description;
 const SITE_ICONS_BY_SITE: Record<ProductId, Metadata['icons']> = {
   diffs: {
     icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/favicon.png', type: 'image/png' },
+      { url: '/diffs-brand/icon.svg', type: 'image/svg+xml' },
+      { url: '/diffs-brand/icon.ico', sizes: '32x32' },
     ],
     apple: '/diffs-brand/apple-icon.png',
   },
   trees: {
     icon: [
       { url: '/trees-brand/icon.svg', type: 'image/svg+xml' },
-      { url: '/trees-brand/icon.ico', sizes: 'any' },
+      { url: '/trees-brand/icon.ico', sizes: '32x32' },
     ],
     apple: '/trees-brand/apple-icon.png',
-  },
-  diffshub: {
-    icon: [
-      { url: '/diffshub-brand/icon.svg', type: 'image/svg+xml' },
-      { url: '/diffshub-brand/icon.ico', sizes: 'any' },
-    ],
-    apple: '/diffshub-brand/apple-icon.png',
   },
 };
 const SITE_OG_IMAGE_BY_SITE: Record<ProductId, string> = {
   diffs: '/diffs-brand/opengraph-image.png',
   trees: '/trees-brand/opengraph-image.png',
-  diffshub: '/diffshub-brand/opengraph-image.png',
 };
 const SITE_TWITTER_IMAGE_BY_SITE: Record<ProductId, string> = {
   diffs: '/diffs-brand/twitter-image.png',
   trees: '/trees-brand/twitter-image.png',
-  diffshub: '/diffshub-brand/twitter-image.png',
 };
 const SITE_ICONS = SITE_ICONS_BY_SITE[SITE];
 const SITE_OG_IMAGE = SITE_OG_IMAGE_BY_SITE[SITE];
@@ -174,6 +160,22 @@ const themeBootstrapScript = `(${String(function applyInitialTheme() {
     root.classList.remove('light', 'dark');
     root.classList.add(resolvedTheme);
     root.style.colorScheme = resolvedTheme;
+
+    // Set the iOS navbar tint before first paint so it matches the resolved
+    // mode immediately. The meta is created here (not authored in JSX, which
+    // React 19 would hoist into a duplicate) and owned by JS thereafter.
+    // Literals mirror MODE_THEME_COLOR in theme-provider.tsx (this stringified
+    // script can't import it); keep them in sync.
+    let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta == null) {
+      themeColorMeta = document.createElement('meta');
+      themeColorMeta.setAttribute('name', 'theme-color');
+      document.head.appendChild(themeColorMeta);
+    }
+    themeColorMeta.setAttribute(
+      'content',
+      resolvedTheme === 'dark' ? '#0a0a0a' : '#ffffff'
+    );
   } catch {
     // Ignore storage/media failures and let CSS defaults apply.
   }
@@ -206,8 +208,6 @@ export const metadata: Metadata = {
   },
 };
 
-const WrapperContext = SITE === 'diffshub' ? WorkerPoolContext : Fragment;
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -220,6 +220,10 @@ export default function RootLayout({
       className={`${berkeleyMono.variable} ${geistSans.variable} ${geistMono.variable} ${firaMono.variable} ${ibmPlexMono.variable} ${jetbrainsMono.variable} ${inter.variable}`}
     >
       <head>
+        {/* The iOS navbar tint <meta name="theme-color"> is created and
+            managed entirely by the bootstrap script below (and ThemeProvider),
+            not authored here — React 19 hoists head tags and would leave a
+            duplicate it manages alongside ours. */}
         <script
           id="docs-theme-bootstrap"
           dangerouslySetInnerHTML={{ __html: themeBootstrapScript }}
@@ -227,22 +231,20 @@ export default function RootLayout({
       </head>
       <body className={SITE}>
         <ScrollbarGutterVariables />
-        <WrapperContext>
-          <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-            {children}
-            <Toaster />
-            <div
-              id="dark-mode-portal-container"
-              className="dark"
-              data-theme="dark"
-            ></div>
-            <div
-              id="light-mode-portal-container"
-              className="light"
-              data-theme="light"
-            ></div>
-          </ThemeProvider>
-        </WrapperContext>
+        <ThemeProvider attribute="class">
+          {children}
+          <Toaster />
+          <div
+            id="dark-mode-portal-container"
+            className="dark"
+            data-theme="dark"
+          ></div>
+          <div
+            id="light-mode-portal-container"
+            className="light"
+            data-theme="light"
+          ></div>
+        </ThemeProvider>
         <PreloadHighlighter />
       </body>
     </html>

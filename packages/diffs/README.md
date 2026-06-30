@@ -24,23 +24,22 @@ JavaScript and React components.
 ## Install
 
 ```bash
-bun i @pierre/diffs
+pnpm add @pierre/diffs
 ```
 
 ## Development
 
-Technically you can use the package manager of your choice, but we use
-[bun](https://bun.sh/).
+We use pnpm for workspace package management and Bun for tests.
 
 ```bash
-# From the root of the mono repo: setup dependencies
-bun install
+# From the root of the monorepo: setup dependencies
+pnpm install
 
-# Start the demo vite test server from root
-bun run demo:dev
+# Start the demo vite test server
+moonx demo:dev
 
-# To run the docs from root
-bun run docs:dev
+# To run the docs (diffs site)
+moonx docs:dev-diffs
 ```
 
 ### Testing
@@ -53,7 +52,7 @@ bun test
 bun test --update-snapshots
 
 # Type checking
-bun run tsc
+moonx diffs:typecheck
 ```
 
 Tests are located in the `test/` folder and use Bun's native testing framework
@@ -64,12 +63,13 @@ with snapshot support.
 **Applicable to the Pierre team only.**
 
 ```bash
-# You may need to login with npm first:
-npm login
+# You may need to login first:
+pnpm login
 
-# Always run publish from within the package directory
+# Always run publish from within the package directory.
 cd packages/diffs
-bun publish
+pnpm publish
+# In a CI-marked shell: CI= pnpm publish
 ```
 
 ## Building the sprite
@@ -78,7 +78,7 @@ The diff UI uses an SVG sprite built from `@pierre/icons`. From the monorepo
 root:
 
 ```bash
-bun run icons:sprite
+moonx root:icons
 ```
 
 This reads SVGs from `node_modules/@pierre/icons/svg` and writes

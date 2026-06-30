@@ -56,6 +56,7 @@ const WORKER_POOL = true;
 const VIRTUALIZE = true;
 const CRAZY_FILE = false;
 const LARGE_CONFLICT_FILE = false;
+const CODE_VIEW_OLD_NEW_FILE = true;
 
 const FileStreamCodeConfigs: FileStreamCodeConfigsItem[] = [
   {
@@ -175,6 +176,41 @@ function startStreaming() {
 }
 
 let parsedPatches: ParsedPatch[] | undefined;
+let parsedCodeViewFilePatches: ParsedPatch[] | undefined;
+
+function createCodeViewFilePatches(): ParsedPatch[] {
+  const oldFile: FileContents = {
+    name: 'file_old.ts',
+    contents: FILE_OLD,
+    cacheKey: 'code-view-file-old',
+  };
+  const newFile: FileContents = {
+    name: 'file_new.ts',
+    contents: FILE_NEW,
+    cacheKey: 'code-view-file-new',
+  };
+
+  return [{ files: [parseDiffFromFile(oldFile, newFile)] }];
+}
+
+async function loadCodeViewPatches(): Promise<ParsedPatch[]> {
+  if (CODE_VIEW_OLD_NEW_FILE) {
+    return (parsedCodeViewFilePatches ??= createCodeViewFilePatches());
+  }
+  return (parsedPatches ??= parsePatchFiles(
+    await loadPatchContent(),
+    'parsed-patch'
+  ));
+}
+
+function handlePreloadCodeViewDiff() {
+  if (CODE_VIEW_OLD_NEW_FILE) {
+    parsedCodeViewFilePatches ??= createCodeViewFilePatches();
+    return;
+  }
+  void handlePreloadDiff();
+}
+
 async function handlePreloadDiff() {
   if (parsedPatches != null) return;
   const content = await loadPatchContent();
@@ -204,9 +240,6 @@ function renderDiff(parsedPatches: ParsedPatch[], manager?: WorkerPoolManager) {
     let hunkIndex = 0;
     for (const fileDiff of parsedPatch.files) {
       const fileAnnotations = patchAnnotations[hunkIndex];
-      let instance:
-        | FileDiff<LineCommentMetadata>
-        | VirtualizedFileDiff<LineCommentMetadata>;
       const options: FileDiffOptions<LineCommentMetadata> = {
         theme: DEMO_THEME,
         themeType,
@@ -380,7 +413,9 @@ function renderDiff(parsedPatches: ParsedPatch[], manager?: WorkerPoolManager) {
         //   props.tokenElement.style.borderRadius = '';
         // },
       };
-      instance = (() => {
+      const instance:
+        | FileDiff<LineCommentMetadata>
+        | VirtualizedFileDiff<LineCommentMetadata> = (() => {
         if (virtualizer != null) {
           return new VirtualizedFileDiff<LineCommentMetadata>(
             options,
@@ -512,16 +547,12 @@ const renderCodeViewButton = document.getElementById('render-code-view');
 if (renderCodeViewButton != null) {
   renderCodeViewButton.addEventListener('click', () => {
     void (async () => {
-      parsedPatches ??= parsePatchFiles(
-        await loadPatchContent(),
-        'parsed-patch'
-      );
-      renderCodeView(parsedPatches);
+      renderCodeView(await loadCodeViewPatches());
     })();
   });
   renderCodeViewButton.addEventListener(
     'pointerenter',
-    () => void handlePreloadDiff()
+    handlePreloadCodeViewDiff
   );
 }
 
@@ -681,9 +712,9 @@ function toggleTheme() {
 const fileExample: FileContents | Promise<FileContents> = (() => {
   if (CRAZY_FILE) {
     return new Promise<FileContents>((resolve) => {
-      void import('../../../bun.lock?raw').then(({ default: contents }) =>
+      void import('../../../pnpm-lock.yaml?raw').then(({ default: contents }) =>
         resolve({
-          name: 'file.json',
+          name: 'pnpm-lock.yaml',
           contents,
           cacheKey: 'diff',
         })
@@ -715,9 +746,6 @@ if (renderFileButton != null) {
     const wrap = getWrapped();
     const fileContainer = document.createElement(DIFFS_TAG_NAME);
     wrapper.appendChild(fileContainer);
-    let instance:
-      | File<LineCommentMetadata>
-      | VirtualizedFile<LineCommentMetadata>;
     const options: FileOptions<LineCommentMetadata> = {
       overflow: wrap ? 'wrap' : 'scroll',
       theme: DEMO_THEME,
@@ -816,7 +844,9 @@ if (renderFileButton != null) {
       // },
     };
 
-    instance = (() => {
+    const instance:
+      | File<LineCommentMetadata>
+      | VirtualizedFile<LineCommentMetadata> = (() => {
       if (virtualizer != null) {
         return new VirtualizedFile<LineCommentMetadata>(
           options,

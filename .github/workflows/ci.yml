@@ -6,215 +6,108 @@ on:
       - main
   pull_request:
 
+# Plain-text-friendly logs: moon already disables colors and spinners when it
+# detects CI, but Vite/Next force ANSI color when they see GITHUB_ACTIONS.
+# NO_COLOR keeps downloaded/raw logs byte-clean for humans and agents; GitHub
+# workflow commands (::error test annotations) are unaffected.
+env:
+  NO_COLOR: 1
+
 jobs:
-  build:
-    name: Build Dependencies
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+  # One affected-aware lane: moon computes the affected projects from the VCS
+  # diff (PR base, or the push range on main), expands through graph
+  # relations (a package change re-runs its dependents' builds, tests, and
+  # typechecks — including trees e2e), and restores unchanged work from the
+  # moon cache on the sticky disks. The target list is every CI entry point;
+  # graph-connected tasks like trees:test-e2e also join automatically when
+  # affected, so listing them keeps cold runs explicit rather than adding
+  # coverage.
+  ci:
+    name: Build, test, lint
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          bun-version: 1.3.12
+          # moon diffs against the merge base to compute affected projects.
+          fetch-depth: 0
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build workspace packages
-        run: bun ws "packages/*" build
-
-      - name: Build docs (generates .source)
-        run: bun ws docs build
-
-      - name: Build docs (diffshub)
-        run: NEXT_PUBLIC_SITE=diffshub bun ws docs build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: |
-            packages/diffs/dist/
-            packages/trees/dist/
-            packages/storage-elements/dist/
-            packages/storage-elements-next/dist/
-            apps/docs/.source/
-            apps/docs/.next/
-          retention-days: 1
-
-  lint:
-    name: Lint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.8
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-
-      - name: Run Lint
-        run: bun run lint
-
-  stylelint:
-    name: Stylelint
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.8
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run Stylelint
-        run: bun run lint:css
-
-  format:
-    name: Format
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.8
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run Format check
-        run: bun run format:check
-
-  test:
-    name: Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.8
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-
-      - name: Run tests - precision-diffs
-        run: bun ws diffs test
-
-      - name: Run tests - trees
-        run: bun ws trees test
-
-      - name: Run tests - path-store
-        run: bun ws path-store test
+      - name: Set up moon and caches
+        uses: ./.github/actions/setup
 
       - name: Mount Playwright browsers
-        uses: useblacksmith/stickydisk@v1
+        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
           key: ${{ github.repository }}-playwright-browsers-${{ runner.os }}
           path: ~/.cache/ms-playwright
-      - name: Install Playwright browser - trees
-        run: bunx playwright@1.51.1 install --with-deps chromium
 
-      - name: Run tests - trees e2e
-        run: bun ws trees test:e2e
+      # Skip the expensive browser + system-deps install when moon will skip
+      # the e2e target anyway. Fail-open: any query error installs.
+      - name: Check whether trees e2e is affected
+        id: e2e-affected
+        run: |
+          out="$(moon query tasks --affected --downstream deep 2>/dev/null)" || out="test-e2e"
+          case "$out" in
+            *test-e2e*) echo "run=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "run=false" >> "$GITHUB_OUTPUT" ;;
+          esac
 
-  typecheck:
-    name: TypeScript
+      # System libraries are per-runner and not covered by the browser cache.
+      - name: Install Playwright browser
+        if: steps.e2e-affected.outputs.run == 'true'
+        run: pnpm dlx playwright@1.51.1 install --with-deps chromium
+
+      # Note on targets: moon ci executes every affected runInCI-enabled
+      # task — the target list adds entry points (so cold runs are explicit)
+      # but never subtracts. Anything that must not run in CI is
+      # runInCI: 'skip' in its task config. No task may write another
+      # task's outputs mid-pipeline (tests never build; builds own their
+      # dist exclusively) — that invariant is what makes the parallel
+      # pipeline safe.
+      #
+      # `:task` shapes only bind to projects affected by changed FILES;
+      # tasks that are affected through graph relations (e.g. docs:build
+      # when packages/diffs changes) only run when named explicitly, and
+      # explicit targets are still affected-filtered (they skip when their
+      # project is untouched). So every cross-project consumer build is
+      # listed by name — that is what catches Next/transpilePackages
+      # regressions in apps when a package changes.
+      # --summary detailed appends an end-of-log recap naming every action
+      # with status, duration, and cache hash, so a failed target is readable
+      # from the log tail without scrolling through interleaved task output.
+      - name: Run format
+        run: >-
+          moon run root:format-check
+
+      - name: Run affected tasks
+        run: >-
+          moon ci --include-relations --summary detailed :build demo:build
+          diffshub:build docs:build docs:build-trees-site path-store:build-demo
+          :test :typecheck trees:test-e2e root:lint root:lint-css
+
+  actions-pinned:
+    name: Actions pinned to SHA
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: build
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.8
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-output
-
-      - name: Type check all workspaces
-        run: bun run ws "*" tsc
+      - name: Verify external actions are pinned to a full commit SHA
+        run: |
+          # Supply-chain guard: every external action must be pinned to a
+          # 40-character commit SHA, never a movable tag/branch. Local actions
+          # (uses: ./...) ship with the repo and are exempt. Scans the workflows
+          # and the shared composite action manifest alike.
+          set -euo pipefail
+          unpinned=$(
+            grep -rEn '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^.[:space:]]' .github \
+              | grep -vE 'uses:[[:space:]]*[^[:space:]]+@[0-9a-fA-F]{40}([[:space:]]|#|"|'"'"'|$)' \
+              || true
+          )
+          if [ -n "$unpinned" ]; then
+            echo "::error::These actions are not pinned to a full commit SHA:"
+            echo "$unpinned"
+            echo "Pin each to a 40-character commit SHA, e.g. owner/repo@<sha> # vX.Y.Z"
+            exit 1
+          fi
+          echo "All external actions are pinned to a full commit SHA."

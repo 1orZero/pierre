@@ -8,6 +8,62 @@ const options = {
   unsafeCSS: CustomScrollbarCSS,
 } as const;
 
+export const VANILLA_API_POST_RENDER_LIFECYCLE: PreloadFileOptions<undefined> =
+  {
+    file: {
+      name: 'post_render_lifecycle.ts',
+      contents: `import { FileDiff } from '@pierre/diffs';
+
+const cleanupByNode = new WeakMap<HTMLElement, () => void>();
+
+const instance = new FileDiff({
+  onPostRender(node, _instance, phase) {
+    if (phase === 'mount') {
+      const selectionRoot = node.shadowRoot ?? node;
+
+      const handleSelectStart = () => {
+        console.log('selection started in diff');
+      };
+
+      const handleSelectionChange = () => {
+        const selection = document.getSelection();
+        if (selection == null || selection.isCollapsed) {
+          return;
+        }
+
+        if (
+          !containsSelectionNode(selectionRoot, selection.anchorNode) &&
+          !containsSelectionNode(selectionRoot, selection.focusNode)
+        ) {
+          return;
+        }
+
+        console.log('selected text', selection.toString());
+      };
+
+      selectionRoot.addEventListener('selectstart', handleSelectStart);
+      document.addEventListener('selectionchange', handleSelectionChange);
+      cleanupByNode.set(node, () => {
+        selectionRoot.removeEventListener('selectstart', handleSelectStart);
+        document.removeEventListener('selectionchange', handleSelectionChange);
+      });
+      return;
+    }
+
+    if (phase === 'unmount') {
+      cleanupByNode.get(node)?.();
+      cleanupByNode.delete(node);
+    }
+  },
+});
+
+function containsSelectionNode(root: Node, node: Node | null) {
+  return node != null && root.contains(node);
+}`,
+    },
+    options,
+  };
+
 // =============================================================================
 // COMPONENT EXAMPLES (short, focused on usage)
 // =============================================================================
@@ -331,12 +387,16 @@ const instance = new FileDiff({
   // Skip syntax highlighting for lines exceeding this length
   tokenizeMaxLineLength: 1000,
 
-  // Fires after hydration, and after render passes that commit DOM updates.
-  // Those DOM updates may be a full replacement or a partial update.
+  // Fires after hydration, after DOM-committing render updates, and before
+  // mounted DOM is removed. Phase is 'mount' | 'update' | 'unmount'.
   // Receives the outer diffs container element.
-  // Useful when you want to do your own post-render DOM manipulation.
+  // Useful when you want to measure, observe, or clean up DOM-node state.
   // You can access the shadow DOM from here if you need to inspect lines.
-  onPostRender(node, fileDiffInstance) {
+  onPostRender(node, fileDiffInstance, phase) {
+    if (phase === 'unmount') {
+      return;
+    }
+
     const codeLines = node.shadowRoot?.querySelectorAll('[data-line]');
     console.log('rendered line count', codeLines?.length ?? 0);
   },
@@ -455,7 +515,8 @@ const instance = new FileDiff({
     return span;
   },
 
-  // Render annotations on specific lines
+  // Render annotations on specific lines. Use lineNumber: 0 for a file-level
+  // annotation above the first hunk separator or diff row.
   renderAnnotation(annotation) {
     const element = document.createElement('div');
     element.textContent = annotation.metadata.threadId;
@@ -492,7 +553,10 @@ const instance = new FileDiff({
 instance.render({
   oldFile: { name: 'file.ts', contents: '...' },
   newFile: { name: 'file.ts', contents: '...' },
-  lineAnnotations: [{ side: 'additions', lineNumber: 5, metadata: {} }],
+  lineAnnotations: [
+    { side: 'additions', lineNumber: 0, metadata: {} },
+    { side: 'additions', lineNumber: 5, metadata: {} },
+  ],
   containerWrapper: document.body,
 });
 
@@ -501,6 +565,7 @@ instance.setOptions({ ...instance.options, diffStyle: 'unified' });
 
 // Update line annotations after initial render
 instance.setLineAnnotations([
+  { side: 'additions', lineNumber: 0, metadata: { threadId: 'file-summary' } },
   { side: 'additions', lineNumber: 5, metadata: { threadId: 'abc' } }
 ]);
 
@@ -583,12 +648,16 @@ const instance = new File({
   // Skip syntax highlighting for lines exceeding this length
   tokenizeMaxLineLength: 1000,
 
-  // Fires after hydration, and after render passes that commit DOM updates.
-  // Those DOM updates may be a full replacement or a partial update.
+  // Fires after hydration, after DOM-committing render updates, and before
+  // mounted DOM is removed. Phase is 'mount' | 'update' | 'unmount'.
   // Receives the outer diffs container element.
-  // Useful when you want to do your own post-render DOM manipulation.
+  // Useful when you want to measure, observe, or clean up DOM-node state.
   // You can access the shadow DOM from here if you need to inspect lines.
-  onPostRender(node, fileInstance) {
+  onPostRender(node, fileInstance, phase) {
+    if (phase === 'unmount') {
+      return;
+    }
+
     const codeLines = node.shadowRoot?.querySelectorAll('[data-line]');
     console.log('rendered line count', codeLines?.length ?? 0);
   },
@@ -696,7 +765,8 @@ const instance = new File({
     return span;
   },
 
-  // Render annotations on specific lines
+  // Render annotations on specific lines. Use lineNumber: 0 for a file-level
+  // annotation above the first file line.
   // Note: File uses LineAnnotation (no 'side' property)
   renderAnnotation(annotation) {
     const element = document.createElement('div');
@@ -731,7 +801,10 @@ const instance = new File({
 // Render the file
 instance.render({
   file: { name: 'example.ts', contents: '...' },
-  lineAnnotations: [{ lineNumber: 5, metadata: {} }],
+  lineAnnotations: [
+    { lineNumber: 0, metadata: {} },
+    { lineNumber: 5, metadata: {} },
+  ],
   containerWrapper: document.body,
 });
 
@@ -740,6 +813,7 @@ instance.setOptions({ ...instance.options, overflow: 'wrap' });
 
 // Update line annotations after initial render
 instance.setLineAnnotations([
+  { lineNumber: 0, metadata: { commentId: 'file-summary' } },
   { lineNumber: 5, metadata: { commentId: 'abc' } }
 ]);
 

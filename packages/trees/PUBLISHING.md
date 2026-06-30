@@ -21,13 +21,13 @@ git checkout -b release/trees-<version>
 
 Trees is on a `1.0.0-beta.<n>` track. Bump `<n>` for beta-only changes.
 
-Run `bun install` to update `bun.lock`, commit, open a PR, merge. Releases must
-come from merged commits on `main`.
+Run `pnpm install` to update `pnpm-lock.yaml`, commit, open a PR, merge.
+Releases must come from merged commits on `main`.
 
 ## 1. Confirm auth
 
 ```bash
-bun pm whoami            # must print an npm username with @pierre publish access
+pnpm whoami            # must print an npm username with @pierre publish access
 ```
 
 ## 2. Rehearse with `--dry-run`
@@ -35,20 +35,21 @@ bun pm whoami            # must print an npm username with @pierre publish acces
 From `packages/trees`:
 
 ```bash
-bun run publish-package -- --dry-run
+moonx trees:publish -- --dry-run
 ```
 
 The script will:
 
 1. Verify the working tree is clean (override with `--dirty` only if you know
    what you're doing).
-2. `bun run build` (runs the V3 `assert-no-path-store` gate automatically).
-3. `bun pm pack` to a tempdir, untar, strip `@pierre/path-store` from the
-   unpacked `package.json`, and remove release-only lifecycle scripts.
+2. `moonx trees:build` (runs the V3 `assert-no-path-store` gate automatically).
+3. `pnpm pack --pack-destination` to a tempdir, untar, strip
+   `@pierre/path-store` from the unpacked `package.json`, and remove
+   release-only lifecycle scripts.
 4. Repack that rewritten package into a final tarball.
 5. Verify the final tarball has no `@pierre/path-store` references and no
    `*.tsbuildinfo` files.
-6. Run `bun publish --dry-run` against the final tarball, print the
+6. Run `pnpm publish --dry-run` against the final tarball, print the
    `package.json` diff and final tarball listing, then stop without uploading.
 
 Inspect the diff. It should delete the `@pierre/path-store` dependency and the
@@ -73,24 +74,22 @@ In each:
 6. Exercise each subpath: `@pierre/trees`, `@pierre/trees/react`,
    `@pierre/trees/ssr`, `@pierre/trees/web-components`.
 
-**Bun note.** Bun's `minimum-release-age` protection can block fresh installs
-right after a publish. Use:
-
-```bash
-bun install --minimum-release-age 0
-```
+**Release-age note.** pnpm enforces the workspace `minimumReleaseAge` from
+`pnpm-workspace.yaml`. Exact pre-existing packages needed during migration may
+be added to `minimumReleaseAgeExclude`; do not lower the workspace policy for a
+release.
 
 ## 4. Publish to `beta`
 
 ```bash
-bun run publish-package -- --tag=beta
+moonx trees:publish -- --tag=beta
 ```
 
 Verify on npm:
 
 ```bash
-npm view @pierre/trees@<version> version
-npm view @pierre/trees dist-tags --json
+pnpm view @pierre/trees@<version> version
+pnpm view @pierre/trees dist-tags --json
 ```
 
 ## 5. Promote to `latest`
@@ -98,7 +97,7 @@ npm view @pierre/trees dist-tags --json
 After smoke tests pass on the beta tarball:
 
 ```bash
-bun run publish-package -- --tag=latest --promote-latest --tag-release
+moonx trees:publish -- --tag=latest --promote-latest --tag-release
 ```
 
 `--promote-latest` moves the `latest` dist-tag to this version. `--tag-release`
@@ -107,8 +106,8 @@ creates and pushes a git tag (`@pierre/trees@<version>`).
 You can also split these into separate invocations:
 
 ```bash
-bun run publish-package -- --tag=latest     # publish under latest
-npm dist-tag add @pierre/trees@<version> latest
+moonx trees:publish -- --tag=latest     # publish under latest
+pnpm dist-tag add @pierre/trees@<version> latest
 git tag -a "@pierre/trees@<version>" -m "@pierre/trees <version>"
 git push origin "@pierre/trees@<version>"
 ```
@@ -119,31 +118,31 @@ If you spun up dev servers, Playwright fixtures, or Chrome debug instances
 during verification, release the ports:
 
 ```bash
-bun run wt clean
+moonx root:wt -- clean
 ```
 
 ## Recovering from a failed publish
 
 Publish is atomic per tarball — the script either uploads the final artifact or
-it doesn't. If `bun publish` fails inside the script, nothing was uploaded: fix
+it doesn't. If `pnpm publish` fails inside the script, nothing was uploaded: fix
 the issue, commit, and re-run.
 
 If the publish succeeded but smoke tests fail afterwards, **do not
-`npm unpublish`**. Bump to the next `1.0.0-beta.<n+1>`, publish again, and leave
-the broken version stranded on npm with its bad `beta` tag.
+`pnpm unpublish`**. Bump to the next `1.0.0-beta.<n+1>`, publish again, and
+leave the broken version stranded on npm with its bad `beta` tag.
 
 ## Quick checklist
 
 - [ ] release branch cut, `version` bumped, `CHANGELOG.md` updated
 - [ ] release PR merged into `main`
-- [ ] `bun pm whoami` confirms publish access to `@pierre`
-- [ ] `bun run publish-package -- --dry-run` reviewed (`@pierre/path-store` and
+- [ ] `pnpm whoami` confirms publish access to `@pierre`
+- [ ] `moonx trees:publish -- --dry-run` reviewed (`@pierre/path-store` and
       release-only scripts should disappear from `package.json`)
 - [ ] React 18.3.1 consumer smoke test passed (all four subpaths, no
       `@pierre/path-store` in `node_modules`)
 - [ ] React 19 consumer smoke test passed (all four subpaths, no
       `@pierre/path-store` in `node_modules`)
-- [ ] `bun run publish-package -- --tag=beta` succeeded
+- [ ] `moonx trees:publish -- --tag=beta` succeeded
 - [ ] `--tag=latest --promote-latest` run after smoke verification
 - [ ] git tag pushed (`@pierre/trees@<version>`)
-- [ ] `bun run wt clean` from the monorepo root
+- [ ] `moonx root:wt -- clean` from the monorepo root

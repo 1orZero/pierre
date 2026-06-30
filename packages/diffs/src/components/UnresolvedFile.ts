@@ -13,6 +13,7 @@ import type {
   MergeConflictMarkerRow,
   MergeConflictRegion,
   MergeConflictResolution,
+  PostRenderPhase,
 } from '../types';
 import { areFilesEqual } from '../utils/areFilesEqual';
 import { areMergeConflictActionsEqual } from '../utils/areMergeConflictActionsEqual';
@@ -45,11 +46,12 @@ export type MergeConflictActionsTypeOption<LAnnotation> =
 
 export interface UnresolvedFileOptions<LAnnotation> extends Omit<
   FileDiffOptions<LAnnotation>,
-  'diffStyle'
+  'diffStyle' | 'onPostRender'
 > {
   onPostRender?(
     node: HTMLElement,
-    instance: UnresolvedFile<LAnnotation>
+    instance: UnresolvedFile<LAnnotation>,
+    phase: PostRenderPhase
   ): unknown;
   mergeConflictActionsType?: MergeConflictActionsTypeOption<LAnnotation>;
   onMergeConflictAction?(
@@ -114,6 +116,8 @@ export class UnresolvedFile<
   LAnnotation = undefined,
 > extends FileDiff<LAnnotation> {
   override readonly __id: string = `unresolved-file:${++instanceId}`;
+  override readonly type = 'unresolved-file';
+
   protected computedCache: UnresolvedFileDataCache = {
     file: undefined,
     fileDiff: undefined,
@@ -154,15 +158,22 @@ export class UnresolvedFile<
 
     this.options = options;
     this.hunksRenderer.setOptions(this.getHunksRendererOptions(options));
+    this.syncInteractionOptions();
+  }
 
-    const hunkSeparators = this.options.hunkSeparators ?? 'line-info';
+  // UnresolvedFile adds a merge-conflict-action click handler to the
+  // InteractionManager. FileDiff.syncInteractionOptions() re-runs on every
+  // re-render and during hydration; without this override it would rebuild the
+  // interaction options without that handler, so resolving one conflict (which
+  // re-renders the diff) would silently disable every remaining action button.
+  protected override syncInteractionOptions(): void {
     this.interactionManager.setOptions(
       pluckInteractionOptions(
         this.options,
-        typeof hunkSeparators === 'function' ||
-          hunkSeparators === 'line-info' ||
-          hunkSeparators === 'line-info-basic'
-          ? this.expandHunk
+        typeof this.options.hunkSeparators === 'function' ||
+          (this.options.hunkSeparators ?? 'line-info') === 'line-info' ||
+          this.options.hunkSeparators === 'line-info-basic'
+          ? this.handleExpandHunk
           : undefined,
         this.getLineIndex,
         this.handleMergeConflictActionClick
@@ -197,6 +208,7 @@ export class UnresolvedFile<
   }
 
   override cleanUp(): void {
+    this.emitPostRender(true);
     this.clearMergeConflictActionCache();
     this.computedCache = {
       file: undefined,
@@ -387,7 +399,7 @@ export class UnresolvedFile<
   }
 
   override render(props: UnresolvedFileRenderProps<LAnnotation> = {}): boolean {
-    let {
+    const {
       file,
       fileDiff,
       actions,

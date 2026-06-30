@@ -3,8 +3,9 @@ import type { Element, ElementContent } from 'hast';
 
 import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
 import { FileRenderer } from '../src/renderers/FileRenderer';
+import type { LineAnnotation } from '../src/types';
 import { mockFiles } from './mocks';
-import { assertDefined } from './testUtils';
+import { assertDefined, findHastSlotElements } from './testUtils';
 
 afterAll(async () => {
   await disposeHighlighter();
@@ -141,30 +142,83 @@ describe('FileRenderer AST Structure', () => {
   test('should generate correct totalLines count', async () => {
     const instance = new FileRenderer();
 
-    // Test file1 (TypeScript)
-    const result1 = await instance.asyncRender(mockFiles.file1);
+    // file2's totalLines is asserted in the AST structure test above; this
+    // covers the TypeScript fixture
+    const result = await instance.asyncRender(mockFiles.file1);
     const file1Lines = mockFiles.file1.contents.split('\n').length;
-    expect(result1.totalLines).toBe(file1Lines);
-
-    // Test file2 (JavaScript)
-    const result2 = await instance.asyncRender(mockFiles.file2);
-    const file2Lines = mockFiles.file2.contents.split('\n').length;
-    expect(result2.totalLines).toBe(file2Lines);
+    expect(result.totalLines).toBe(file1Lines);
   });
 
-  test('should include CSS property in result', async () => {
+  test('css is always empty in the non-worker render path', async () => {
     const instance = new FileRenderer();
     const result = await instance.asyncRender(mockFiles.file2);
-    assertDefined(result.css, 'result.css should be defined');
-    expect(result.css).toBeString();
-    // CSS may be empty string depending on theme configuration
+    // processFileResult hardcodes css: '' here; only the worker pipeline
+    // produces theme CSS. If this ever changes, the renderer contract changed
+    expect(result.css).toBe('');
+  });
+
+  test('renders file-level annotations before the first file line', async () => {
+    const instance = new FileRenderer<string>();
+    const annotations: LineAnnotation<string>[] = [
+      { lineNumber: 0, metadata: 'file' },
+      { lineNumber: 2, metadata: 'line' },
+    ];
+    instance.setLineAnnotations(annotations);
+
+    const result = await instance.asyncRender(mockFiles.file2);
+    const codeAST = instance.renderCodeAST(result);
+    const [gutter, contentColumn] = codeAST as Element[];
+    const firstContent = contentColumn.children[0] as Element;
+    const secondContent = contentColumn.children[1] as Element;
+    const firstGutter = gutter.children[0] as Element;
+
+    expect(firstContent.properties?.['data-line-annotation']).toBe('-1,-1');
+    expect(
+      findHastSlotElements(firstContent).map((slot) => slot.properties?.name)
+    ).toEqual(['annotation-0']);
+    expect(secondContent.properties?.['data-line']).toBe(1);
+    expect(firstGutter.properties?.['data-gutter-buffer']).toBe('annotation');
+  });
+
+  test('does not render file-level annotations in non-top render chunks', async () => {
+    const instance = new FileRenderer<string>();
+    instance.setLineAnnotations([{ lineNumber: 0, metadata: 'file' }]);
+
+    const result = await instance.asyncRender(mockFiles.file2, {
+      startingLine: 1,
+      totalLines: 2,
+      bufferBefore: 0,
+      bufferAfter: 0,
+    });
+    const codeAST = instance.renderCodeAST(result);
+    const [, contentColumn] = codeAST as Element[];
+    const firstContent = contentColumn.children[0] as Element;
+
+    expect(firstContent.properties?.['data-line']).toBe(2);
+    expect(
+      contentColumn.children.some(
+        (child) =>
+          child.type === 'element' &&
+          child.properties?.['data-line-annotation'] === '-1,-1'
+      )
+    ).toBe(false);
   });
 
   test('should create preNode with correct properties', async () => {
     const instance = new FileRenderer();
-    const { preAST } = await instance.asyncRender(mockFiles.file2);
+    const { preAST, totalLines } = await instance.asyncRender(mockFiles.file2);
     expect(preAST.type).toBe('element');
     expect(preAST.tagName).toBe('pre');
     assertDefined(preAST.properties, 'preAST.properties should be defined');
+    // File renders are marked data-file (not data-diff) and scrollable
+    expect(preAST.properties['data-file']).toBe('');
+    expect(preAST.properties['data-diff']).toBeUndefined();
+    expect(preAST.properties['data-overflow']).toBe('scroll');
+    // The pre is intentionally not focusable (no tabindex); the host owns focus.
+    expect(preAST.properties.tabIndex).toBeUndefined();
+    // The gutter width var reserves one ch per digit of the line count
+    expect(preAST.properties.style).toBe(
+      `--diffs-min-number-column-width-default:${`${totalLines}`.length}ch;`
+    );
   });
 });
