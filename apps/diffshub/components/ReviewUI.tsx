@@ -16,6 +16,11 @@ import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
+import {
+  DEFAULT_DISPLAY_SETTINGS,
+  readDisplaySettings,
+  writeDisplaySettings,
+} from './displaySettings';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { usePatchLoader } from './usePatchLoader';
 import { useThemeCycle } from './useThemeCycle';
@@ -59,10 +64,46 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     'expanded'
   );
   const [fileTreeOverlayOpen, setFileTreeOverlayOpen] = useState(false);
-  const [overflow, setOverflow] = useState<'wrap' | 'scroll'>('scroll');
-  const [showBackgrounds, setShowBackgrounds] = useState(true);
-  const [diffIndicators, setDiffIndicators] = useState<DiffIndicators>('bars');
-  const [lineNumbers, setLineNumbers] = useState(true);
+  const [overflow, setOverflow] = useState<'wrap' | 'scroll'>(
+    DEFAULT_DISPLAY_SETTINGS.overflow
+  );
+  const [showBackgrounds, setShowBackgrounds] = useState(
+    DEFAULT_DISPLAY_SETTINGS.showBackgrounds
+  );
+  const [diffIndicators, setDiffIndicators] = useState<DiffIndicators>(
+    DEFAULT_DISPLAY_SETTINGS.diffIndicators
+  );
+  const [lineNumbers, setLineNumbers] = useState(
+    DEFAULT_DISPLAY_SETTINGS.lineNumbers
+  );
+  const [displaySettingsHydrated, setDisplaySettingsHydrated] = useState(false);
+
+  useEffect(() => {
+    const settings = readDisplaySettings();
+    setOverflow(settings.overflow);
+    setShowBackgrounds(settings.showBackgrounds);
+    setDiffIndicators(settings.diffIndicators);
+    setLineNumbers(settings.lineNumbers);
+    setDisplaySettingsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!displaySettingsHydrated) {
+      return;
+    }
+    writeDisplaySettings({
+      diffIndicators,
+      lineNumbers,
+      overflow,
+      showBackgrounds,
+    });
+  }, [
+    diffIndicators,
+    displaySettingsHydrated,
+    lineNumbers,
+    overflow,
+    showBackgrounds,
+  ]);
   // All theming state — color mode and the light/dark theme-name picks — lives
   // in the single @pierre/theming controller (the same instance the app-wide
   // ThemeProvider is bound to). Reading it here means picking Auto/Light/Dark
@@ -228,6 +269,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   // first batch of files against the wrong palette.
   const viewerAvailable =
     isWorkerPoolReadyOrDisable &&
+    displaySettingsHydrated &&
     themesHydrated &&
     (loadState === 'ready' ||
       (loadState === 'streaming' && initialItems.length > 0));
