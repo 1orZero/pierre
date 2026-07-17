@@ -54,6 +54,7 @@ import {
   GIT_STATUS_LABEL,
   GIT_STATUS_TITLE,
 } from '../utils/gitStatusPresentation';
+import { shouldBumpControllerRevision } from './controllerSnapshotSubscription';
 import {
   focusElement,
   getActiveTreeElement,
@@ -1279,6 +1280,12 @@ export function FileTreeView({
   );
   const ignoredInheritanceCache = useMemo(() => new Map<string, boolean>(), []);
   const [, setControllerRevision] = useState(0);
+  // Persists across re-subscribes of the controller-subscription effect so the
+  // genuine initial snapshot is suppressed only once per component instance.
+  // A local `let` reset on every effect re-run and swallowed the first real
+  // emit after each re-subscribe (model updated, DOM went stale). See
+  // shouldBumpControllerRevision for the full rationale.
+  const hasSeenInitialControllerSnapshotRef = useRef(false);
   const [activeItemPath, setActiveItemPath] = useState<string | null>(null);
   const [contextHoverPath, setContextHoverPath] = useState<string | null>(null);
   const [contextMenuAnchorTop, setContextMenuAnchorTop] = useState<
@@ -2160,6 +2167,16 @@ export function FileTreeView({
     }
 
     if (renameView.isActive()) {
+      // Skip keys dispatched while an IME is composing a candidate. During
+      // CJK/kana/Hangul composition the Enter that confirms a candidate (and
+      // the Escape that dismisses it) is consumed by the IME and carries
+      // `isComposing: true` (older Safari/Edge report `keyCode === 229`).
+      // Committing/cancelling the rename here would truncate the in-flight
+      // composition, so let the IME handle the key and leave the input open.
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
+
       if (event.key === 'Escape') {
         renameView.cancel();
       } else if (event.key === 'Enter') {
@@ -2671,12 +2688,9 @@ export function FileTreeView({
     }
 
     updateViewportRef.current = update;
-    let hasSeenInitialControllerSnapshot = false;
     const unsubscribe = controller.subscribe(() => {
-      if (hasSeenInitialControllerSnapshot) {
+      if (shouldBumpControllerRevision(hasSeenInitialControllerSnapshotRef)) {
         setControllerRevision((revision) => revision + 1);
-      } else {
-        hasSeenInitialControllerSnapshot = true;
       }
       update();
     });
