@@ -612,9 +612,10 @@ export class VirtualizedFileDiff<
     return position;
   }
 
-  public getScrollContainer(): HTMLElement | undefined {
-    const root = this.getSimpleVirtualizer()?.getRoot();
-    return root instanceof HTMLElement ? root : root?.documentElement;
+  public getEditorViewport(): HTMLElement | Document | undefined {
+    return this.virtualizer.type === 'simple'
+      ? this.virtualizer.getRoot()
+      : this.virtualizer.getContainerElement();
   }
 
   public getNumericScrollAnchor(

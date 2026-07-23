@@ -187,7 +187,7 @@ export interface EditorOptions<LAnnotation> {
   /** The maximum number of entries to keep in the undo stack. */
   historyMaxEntries?: number;
   /**
-   * Preserve each file's document and editor state when switching files.
+   * Preserve each file's document and item-local editor state when switching files.
    * Every editable file must provide a unique, stable `cacheKey`.
    */
   persistState?: boolean;
@@ -242,6 +242,15 @@ export interface EditorOptions<LAnnotation> {
   onBlur?: () => void;
   // debug flag
   __debug?: boolean;
+}
+
+export interface EditorFocusOptions extends FocusOptions {
+  /** One-based document line number or first editable line with a visible top. */
+  lineNumber?: number | 'first-visible';
+  /** Zero-based character offset for a numeric line. Defaults to 0. */
+  character?: number;
+  /** Non-negative CSS pixels below the viewport or sticky header. */
+  offset?: number;
 }
 
 // Cap on how far an edit may widen the virtualized render window, as a multiple
@@ -353,6 +362,10 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
   // deferred to a rAF. Lets applyEdits skip focus/scroll only on unfocused
   // editors, without regressing a same-tick setSelections-then-applyEdits flow.
   #contentHasFocus = false;
+  // A render-owned request object prevents an older deferred frame from
+  // consuming a newer replacement's focus intent. Once synchronized, target
+  // identifies the new content so a subsequent user blur can cancel it.
+  #replacementFocusRequest?: { target?: HTMLElement };
   #isComposing = false;
   #isGutterMouseDown = false;
   #isContentMouseDown = false;
@@ -579,14 +592,13 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
   }
 
   getState(): EditorState {
-    const scrollContainer = this.#fileInstance?.getScrollContainer?.();
+    const fileInstance = this.#fileInstance;
     return {
       selections: this.#selections,
       view:
-        scrollContainer !== undefined
+        fileInstance != null
           ? {
-              scrollLeft: scrollContainer.scrollLeft,
-              scrollTop: scrollContainer.scrollTop,
+              scrollLeft: fileInstance.getCodeScrollLeft(),
             }
           : undefined,
     };
@@ -601,15 +613,8 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     // When a saved view is present, honor its scroll offsets exactly. Scrolling
     // the caret into view afterward would overwrite them whenever the caret
     // sits outside that viewport (e.g. TreeApp remount restore).
-    if (view !== undefined) {
-      const scrollContainer = this.#fileInstance.getScrollContainer?.();
-      if (scrollContainer !== undefined) {
-        scrollContainer.scrollTo({
-          left: view.scrollLeft,
-          top: view.scrollTop,
-          behavior: 'instant',
-        });
-      }
+    if (view != null) {
+      this.#fileInstance.setCodeScrollLeft(view.scrollLeft);
       return;
     }
     this.#scrollToPrimaryCaret();
@@ -681,8 +686,29 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     this.#updateSelections(this.#selections ?? []);
   }
 
-  focus(options?: FocusOptions): void {
+  focus(options?: EditorFocusOptions): void {
     const preventScroll = options?.preventScroll ?? false;
+    const lineNumber = options?.lineNumber;
+    if (lineNumber === 'first-visible' || typeof lineNumber === 'number') {
+      const textDocument = this.#textDocument;
+      if (textDocument == null || this.#fileInstance == null) {
+        return;
+      }
+      const targetLineNumber =
+        lineNumber === 'first-visible'
+          ? this.#getFirstVisibleLineNumber(options?.offset)
+          : lineNumber;
+      if (targetLineNumber == null) {
+        return;
+      }
+      const position = textDocument.normalizePosition({
+        line: targetLineNumber - 1,
+        character:
+          lineNumber === 'first-visible' ? 0 : (options?.character ?? 0),
+      });
+      this.#focusAtPosition(position, preventScroll);
+      return;
+    }
     const primarySelection = this.#selections?.at(-1);
     if (primarySelection !== undefined) {
       const pos =
@@ -696,6 +722,9 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
   }
 
   blur(): void {
+    this.#replacementFocusRequest = undefined;
+    this.#contentHasFocus = false;
+    this.#shouldIgnoreSelectionChange = false;
     this.#contentElement?.blur();
   }
 
@@ -763,6 +792,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     this.#gutterElement = undefined;
     this.#contentElement?.removeAttribute('contentEditable');
     this.#contentElement = undefined;
+    this.#replacementFocusRequest = undefined;
     this.#contentHasFocus = false;
     this.#overlayElement?.remove();
     this.#overlayElement = undefined;
@@ -820,6 +850,21 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
   }
 
   /** @internal */
+  __captureFocusForDOMReplacement(): void {
+    const contentElement = this.#contentElement;
+    const shadowActiveElement = this.#fileContainer?.shadowRoot?.activeElement;
+    if (
+      contentElement != null &&
+      (this.#contentHasFocus ||
+        shadowActiveElement === contentElement ||
+        (shadowActiveElement != null &&
+          contentElement.contains(shadowActiveElement)))
+    ) {
+      this.#replacementFocusRequest = {};
+    }
+  }
+
+  /** @internal */
   __syncRenderView: DiffsEditor<LAnnotation>['__syncRenderView'] = (
     highlighter: DiffsHighlighter,
     fileContainer: HTMLElement,
@@ -856,6 +901,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       }
     }
     if (codeElement === undefined || contentEl === undefined) {
+      this.#replacementFocusRequest = undefined;
       return;
     }
 
@@ -1001,6 +1047,9 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         console.log('[diffs/editor] full re-render triggered !!!');
       }
     }
+    if (this.#replacementFocusRequest != null) {
+      this.#replacementFocusRequest.target = contentEl;
+    }
 
     // The contenteditable host advertises role="textbox", so without an
     // accessible name screen readers announce an unlabeled text field. Label it
@@ -1071,9 +1120,12 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         this.#scrollingToLineChar,
         this.#scrollingToLineNoFocus
       );
+    } else if (this.#replacementFocusRequest !== undefined) {
+      this.#restoreReplacementFocus();
     } else if (
       this.#selections !== undefined &&
       this.#selections.length > 0 &&
+      this.#contentHasFocus &&
       !this.#retainSearchPanelFocus
     ) {
       this.focus({ preventScroll: true });
@@ -1164,8 +1216,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       if (
         textDocument.version === pendingRestore.documentVersion &&
         this.#selections === pendingRestore.selections &&
-        state.view?.scrollLeft === pendingRestore.view?.scrollLeft &&
-        state.view?.scrollTop === pendingRestore.view?.scrollTop
+        state.view?.scrollLeft === pendingRestore.view?.scrollLeft
       ) {
         return;
       }
@@ -1236,7 +1287,6 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         textDocument.version !== documentVersion ||
         this.#selections !== selections ||
         currentView?.scrollLeft !== view?.scrollLeft ||
-        currentView?.scrollTop !== view?.scrollTop ||
         this.#fileInfo === undefined ||
         requirePersistedCacheKey(this.#fileInfo) !== cacheKey
       ) {
@@ -1402,6 +1452,17 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       ) {
         return;
       }
+      const contentElement = this.#contentElement;
+      const shadowRoot = this.#fileContainer?.shadowRoot;
+      // A host rerender queued ahead of this callback may have replaced the
+      // editable DOM while its asynchronous editor sync is still pending.
+      if (
+        contentElement == null ||
+        shadowRoot == null ||
+        !shadowRoot.contains(contentElement)
+      ) {
+        return;
+      }
       attachState.delivered = true;
       this.#options.onAttach?.(this, fileInstance);
     };
@@ -1437,7 +1498,46 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       dataset: 'editorOverlay',
     });
 
+    const replacementFocusTargetIsContent = (event: Event) => {
+      const target = event.composedPath()[0];
+      return (
+        target instanceof Node &&
+        this.#contentElement?.contains(target) === true
+      );
+    };
+    const cancelReplacementFocus = () => {
+      if (this.#replacementFocusRequest == null) {
+        return;
+      }
+
+      // A focus or pointer target outside the editor owns the newer intent.
+      this.#replacementFocusRequest = undefined;
+      this.#contentHasFocus = false;
+      this.#shouldIgnoreSelectionChange = false;
+    };
     this.#globalEventDisposes = [
+      addEventListener(
+        document,
+        'focusin',
+        (event) => {
+          if (!replacementFocusTargetIsContent(event)) {
+            cancelReplacementFocus();
+          }
+        },
+        { passive: true }
+      ),
+      addEventListener(
+        document,
+        'pointerdown',
+        (event) => {
+          if (!replacementFocusTargetIsContent(event)) {
+            // Target handlers can synchronously render and arm the request.
+            queueMicrotask(cancelReplacementFocus);
+          }
+        },
+        { capture: true, passive: true }
+      ),
+
       addEventListener(
         document,
         'selectionchange',
@@ -1679,6 +1779,10 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         contentEl,
         'blur',
         () => {
+          if (this.#replacementFocusRequest?.target === contentEl) {
+            this.#replacementFocusRequest = undefined;
+            this.#shouldIgnoreSelectionChange = false;
+          }
           this.#contentHasFocus = false;
           onBlur?.();
         },
@@ -2935,7 +3039,9 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       this.#markerRenderer !== undefined
     ) {
       this.#updateSelections(this.#selections ?? []);
-      if (this.#selections !== undefined) {
+      // Virtualized row swaps can resize a blurred editor. Repaint its overlays
+      // without letting that layout work reclaim DOM focus.
+      if (this.#selections !== undefined && this.#contentHasFocus) {
         this.focus();
       }
     }
@@ -3235,7 +3341,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     }
   }
 
-  #focus(position?: Position, preventScroll = true) {
+  #focus(
+    position?: Position,
+    preventScroll = true,
+    shouldFocus?: () => boolean
+  ) {
     // Mark focus eagerly: the positional branch defers the real focus() to a
     // rAF, so a same-tick applyEdits would otherwise see the editor as
     // unfocused and skip repositioning while this focus still lands afterward.
@@ -3249,16 +3359,207 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       });
       // call focus in a request animation frame to prevent conflict with
       // the `setBaseAndExtent` method
-      requestAnimationFrame(() => {
+      queueRender(() => {
+        if (shouldFocus?.() === false) {
+          this.#shouldIgnoreSelectionChange = false;
+          return;
+        }
         this.#contentElement?.focus({ preventScroll });
         // another request animation frame since the `focus` call
         // may trigger a selectionchange event, which should be ignored
-        requestAnimationFrame(() => {
+        queueRender(() => {
           this.#shouldIgnoreSelectionChange = false;
         });
       });
-    } else {
+    } else if (shouldFocus?.() !== false) {
       this.#contentElement?.focus({ preventScroll });
+    } else {
+      this.#contentHasFocus = false;
+    }
+  }
+
+  // A full host render can remove the focused contenteditable before the
+  // replacement view synchronizes. Restore only after the new content is live
+  // and only while focus has not moved to another real control in the gap.
+  #restoreReplacementFocus(position?: Position): void {
+    const request = this.#replacementFocusRequest;
+    if (request == null) {
+      return;
+    }
+    if (this.#retainSearchPanelFocus) {
+      this.#replacementFocusRequest = undefined;
+      this.#contentHasFocus = false;
+      this.#shouldIgnoreSelectionChange = false;
+      return;
+    }
+    const contentElement = this.#contentElement;
+    if (
+      contentElement == null ||
+      !this.#replacementFocusIsAvailable(contentElement)
+    ) {
+      this.#replacementFocusRequest = undefined;
+      this.#contentHasFocus = false;
+      return;
+    }
+
+    const shouldFocus = () => {
+      if (this.#replacementFocusRequest !== request) {
+        return false;
+      }
+      const shouldRestore = this.#replacementFocusIsAvailable(contentElement);
+      this.#replacementFocusRequest = undefined;
+      return shouldRestore;
+    };
+    if (position != null) {
+      this.#focus(position, true, shouldFocus);
+      return;
+    }
+    const primarySelection = this.#selections?.at(-1);
+    if (primarySelection == null) {
+      this.#focus(undefined, true, shouldFocus);
+      return;
+    }
+    const primaryPosition =
+      primarySelection.direction === DirectionBackward
+        ? primarySelection.end
+        : primarySelection.start;
+    this.#focus(primaryPosition, true, shouldFocus);
+  }
+
+  #replacementFocusIsAvailable(contentElement: HTMLElement): boolean {
+    const fileContainer = this.#fileContainer;
+    const shadowRoot = fileContainer?.shadowRoot;
+    if (
+      fileContainer == null ||
+      shadowRoot == null ||
+      this.#contentElement !== contentElement ||
+      !shadowRoot.contains(contentElement)
+    ) {
+      return false;
+    }
+    const { activeElement: shadowActiveElement } = shadowRoot;
+    if (
+      shadowActiveElement === contentElement ||
+      (shadowActiveElement != null &&
+        contentElement.contains(shadowActiveElement))
+    ) {
+      return true;
+    }
+    if (shadowActiveElement != null) {
+      return false;
+    }
+    const { ownerDocument } = fileContainer;
+    const { activeElement } = ownerDocument;
+    return (
+      activeElement == null ||
+      activeElement === ownerDocument.body ||
+      activeElement === ownerDocument.documentElement ||
+      activeElement === fileContainer
+    );
+  }
+
+  #getFirstVisibleLineNumber(offset = 0): number | undefined {
+    const contentElement = this.#contentElement;
+    const fileContainer = this.#fileContainer;
+    if (
+      this.#textDocument == null ||
+      contentElement == null ||
+      fileContainer == null
+    ) {
+      return undefined;
+    }
+    const viewport =
+      this.#fileInstance?.getEditorViewport?.() ??
+      this.#getDefaultEditorViewport(fileContainer);
+
+    let viewportTop: number;
+    let viewportBottom: number;
+    if (viewport instanceof HTMLElement) {
+      const viewportRect = viewport.getBoundingClientRect();
+      viewportTop = viewportRect.top;
+      viewportBottom = viewportRect.bottom;
+    } else {
+      const viewportWindow = viewport.defaultView;
+      if (viewportWindow == null) {
+        return undefined;
+      }
+      viewportTop = 0;
+      viewportBottom = viewportWindow.innerHeight;
+    }
+
+    const stickyHeader = fileContainer.shadowRoot?.querySelector<HTMLElement>(
+      '[data-diffs-header][data-sticky]'
+    );
+    if (stickyHeader != null) {
+      viewportTop = Math.max(
+        viewportTop,
+        stickyHeader.getBoundingClientRect().bottom
+      );
+    }
+    if (Number.isFinite(offset)) {
+      viewportTop += Math.max(0, offset);
+    }
+    if (viewportBottom <= viewportTop) {
+      return undefined;
+    }
+
+    for (const child of contentElement.children) {
+      const row = child as HTMLElement;
+      const lineNumber = getLineNumberAttr(row);
+      const lineType = row.dataset.lineType;
+      if (lineNumber == null || lineType == null || !isLineEditable(lineType)) {
+        continue;
+      }
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom <= rowRect.top) {
+        continue;
+      }
+      if (rowRect.top >= viewportTop && rowRect.top < viewportBottom) {
+        return lineNumber;
+      }
+    }
+    return undefined;
+  }
+
+  // Non-virtualized surfaces inherit visibility from their nearest vertical
+  // scrollport; page-scrolling surfaces use the owning document.
+  #getDefaultEditorViewport(
+    fileContainer: HTMLElement
+  ): HTMLElement | Document {
+    const ownerDocument = fileContainer.ownerDocument;
+    let element = fileContainer.parentElement;
+    while (
+      element != null &&
+      element !== ownerDocument.body &&
+      element !== ownerDocument.documentElement
+    ) {
+      const overflowY =
+        element.ownerDocument.defaultView?.getComputedStyle(element).overflowY;
+      if (
+        overflowY === 'auto' ||
+        overflowY === 'scroll' ||
+        overflowY === 'overlay'
+      ) {
+        return element;
+      }
+      element = element.parentElement;
+    }
+    return ownerDocument;
+  }
+
+  #focusAtPosition(position: Position, preventScroll: boolean): void {
+    const selection: EditorSelection = {
+      start: position,
+      end: position,
+      direction: DirectionNone,
+    };
+    this.#canMountSelectionAction = false;
+    this.#updateSelections([selection]);
+    this.#revealLineIfCollapsed(position.line);
+    if (preventScroll) {
+      this.#focus(position, true);
+    } else {
+      this.#scrollToPrimaryCaret();
     }
   }
 
@@ -3320,11 +3621,15 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         inline: 'nearest',
       });
       if (!noFocus) {
-        this.#focus(
+        const position =
           primarySelection.direction === DirectionBackward
             ? primarySelection.end
-            : primarySelection.start
-        );
+            : primarySelection.start;
+        if (this.#replacementFocusRequest !== undefined) {
+          this.#restoreReplacementFocus(position);
+        } else {
+          this.#focus(position);
+        }
       }
     } else {
       const pos = getCaretPosition(primarySelection);
@@ -3366,7 +3671,12 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       this.#overlayElement?.appendChild(virtualCaret);
       virtualCaret.scrollIntoView({ block: 'center', inline: 'nearest' });
       if (!noFocus) {
-        this.#focus({ line, character: char });
+        const position = { line, character: char };
+        if (this.#replacementFocusRequest !== undefined) {
+          this.#restoreReplacementFocus(position);
+        } else {
+          this.#focus(position);
+        }
       }
       this.#scrollingToLine = undefined;
       this.#scrollingToLineChar = undefined;

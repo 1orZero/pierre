@@ -300,6 +300,16 @@ export class File<
     });
   }
 
+  public getCodeScrollLeft(): number {
+    return this.code?.scrollLeft ?? 0;
+  }
+
+  public setCodeScrollLeft(position: number): void {
+    if (this.code != null) {
+      this.code.scrollLeft = position;
+    }
+  }
+
   public flushManagers(): void {
     if (!this.managersDirty || this.pre == null) {
       this.managersDirty = false;
@@ -323,6 +333,9 @@ export class File<
 
   public cleanUp(recycle = false): void {
     this.emitPostRender(true);
+    // Persist editor state while the code scroller still exists.
+    this.editor?.cleanUp(recycle);
+    this.editor = undefined;
     this.resizeManager.cleanUp();
     this.interactionManager.cleanUp();
     this.managersDirty = false;
@@ -373,11 +386,7 @@ export class File<
       this.workerManager = undefined;
       this.file = undefined;
     }
-
     this.enabled = false;
-
-    this.editor?.cleanUp(recycle);
-    this.editor = undefined;
   }
 
   public virtualizedSetup(): void {
@@ -1476,6 +1485,9 @@ export class File<
       previousContainer ??
       document.createElement(DIFFS_TAG_NAME);
     const containerChanged = previousContainer !== nextContainer;
+    if (previousContainer != null && containerChanged) {
+      this.editor?.__captureFocusForDOMReplacement();
+    }
     if (containerChanged) {
       this.emitPostRender(true);
     }
@@ -1555,6 +1567,7 @@ export class File<
     // If we have a new parent container for the pre element, lets go ahead and
     // move it into the new container
     else if (this.pre.parentNode !== shadowRoot) {
+      this.editor?.__captureFocusForDOMReplacement();
       container.shadowRoot?.appendChild(this.pre);
       this.appliedPreAttributes = undefined;
     }

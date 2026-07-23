@@ -103,6 +103,7 @@ function createTrackedEditor(
       detach?.(recycle);
       detach = undefined;
     },
+    __captureFocusForDOMReplacement() {},
     __postponeBgTokenizeToNextFrame() {},
     __syncRenderView() {},
   };
@@ -337,6 +338,7 @@ describe('React CodeView editor factory', () => {
     document.body.appendChild(container);
     const { createEditor, editors, receivedOptions } = createEditorHarness();
     const attemptedOnChange = mock((_file: FileContents) => {});
+    const onAttach = mock(() => {});
     const onItemEditChange = mock(
       (_item: CodeViewItem<undefined>, _file: FileContents) => {}
     );
@@ -344,6 +346,7 @@ describe('React CodeView editor factory', () => {
       // A loosely typed caller can still carry onChange at runtime. CodeView's
       // item router must overwrite it before invoking the provider factory.
       historyMaxEntries: 17,
+      onAttach,
       onChange: attemptedOnChange,
       roundedSelection: false,
     };
@@ -368,6 +371,7 @@ describe('React CodeView editor factory', () => {
       expect(receivedOptions).toHaveLength(2);
       for (const options of receivedOptions) {
         expect(options.historyMaxEntries).toBe(17);
+        expect(options.onAttach).toBe(onAttach);
         expect(options.roundedSelection).toBe(false);
         expect(options.onChange).toBeDefined();
         expect(options.onChange).not.toBe(attemptedOnChange);

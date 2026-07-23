@@ -1033,6 +1033,10 @@ export interface DiffsEditableComponent<
     lineNumber: number | null,
     options?: EditorActiveLineOptions
   ) => void;
+  /** Return the horizontal code scroll position (`scrollLeft`). */
+  getCodeScrollLeft: () => number;
+  /** Set the horizontal code scroll position (`scrollLeft`). */
+  setCodeScrollLeft: (position: number) => void;
   /**
    * Return the position and height of a one-based line relative to this component.
    * The host uses it to scroll to virtualized lines before their DOM nodes exist.
@@ -1043,9 +1047,10 @@ export interface DiffsEditableComponent<
     lineNumber: number
   ) => { top: number; height: number } | undefined;
   /**
-   * Return the scroll container element.
+   * Return an explicit viewport that bounds visible editor rows. Components
+   * without one fall back to their nearest scrollable ancestor or document.
    */
-  getScrollContainer?: () => HTMLElement | undefined;
+  getEditorViewport?: () => HTMLElement | Document | undefined;
   /**
    * Whether the given one-based new-file line currently has (or will have on
    * scroll) a rendered row. False only for lines hidden inside a collapsed
@@ -1109,6 +1114,8 @@ export interface DiffsEditor<LAnnotation> {
   /** @internal */
   __prepareFile?(file: FileContents): FileContents;
   __postponeBgTokenizeToNextFrame(): void;
+  /** @internal Capture focus intent before replacing the editable view. */
+  __captureFocusForDOMReplacement(): void;
   __syncRenderView(
     highlighter: DiffsHighlighter,
     fileContainer: HTMLElement,
@@ -1210,12 +1217,14 @@ export interface EditorSelection extends Range {
   direction: SelectionDirection;
 }
 
+export interface EditorViewState {
+  /** Horizontal position owned by the current editable code scroller. */
+  scrollLeft: number;
+}
+
 export interface EditorState {
   selections?: EditorSelection[];
-  view?: {
-    scrollLeft: number;
-    scrollTop: number;
-  };
+  view?: EditorViewState;
 }
 
 export interface DiffsTextDocument {

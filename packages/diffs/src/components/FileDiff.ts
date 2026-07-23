@@ -609,9 +609,32 @@ export class FileDiff<
     );
   }
 
+  public getCodeScrollLeft(): number {
+    return Math.max(
+      this.codeUnified?.scrollLeft ?? 0,
+      this.codeDeletions?.scrollLeft ?? 0,
+      this.codeAdditions?.scrollLeft ?? 0
+    );
+  }
+
+  public setCodeScrollLeft(position: number): void {
+    if (this.codeUnified != null) {
+      this.codeUnified.scrollLeft = position;
+    }
+    if (this.codeAdditions != null) {
+      this.codeAdditions.scrollLeft = position;
+    }
+    if (this.codeDeletions != null) {
+      this.codeDeletions.scrollLeft = position;
+    }
+  }
+
   public cleanUp(recycle: boolean = false): void {
     dequeueRender(this.handleEditSessionRender);
     this.emitPostRender(true);
+    // Persist editor state while the code scrollers still exist.
+    this.editor?.cleanUp(recycle);
+    this.editor = undefined;
     this.resizeManager.cleanUp();
     this.interactionManager.cleanUp();
     this.scrollSyncManager.cleanUp();
@@ -672,10 +695,6 @@ export class FileDiff<
       this.additionFile = undefined;
     }
 
-    this.enabled = false;
-
-    this.editor?.cleanUp(recycle);
-    this.editor = undefined;
     if (this.refreshViewTimeout != null) {
       clearTimeout(this.refreshViewTimeout);
       this.refreshViewTimeout = undefined;
@@ -683,6 +702,7 @@ export class FileDiff<
     this.lineStateRefreshPending = false;
     this.deferredEditorActiveLine = undefined;
     this.deferredSelectedLines = undefined;
+    this.enabled = false;
   }
 
   public virtualizedSetup(): void {
@@ -1862,6 +1882,9 @@ export class FileDiff<
       previousContainer ??
       document.createElement(DIFFS_TAG_NAME);
     const containerChanged = previousContainer !== nextContainer;
+    if (previousContainer != null && containerChanged) {
+      this.editor?.__captureFocusForDOMReplacement();
+    }
     if (containerChanged) {
       this.emitPostRender(true);
     }
@@ -1943,6 +1966,7 @@ export class FileDiff<
     // If we have a new parent container for the pre element, lets go ahead and
     // move it into the new container
     else if (this.pre.parentNode !== shadowRoot) {
+      this.editor?.__captureFocusForDOMReplacement();
       shadowRoot.appendChild(this.pre);
       this.appliedPreAttributes = undefined;
     }
@@ -2212,6 +2236,7 @@ export class FileDiff<
     const unifiedAST = this.hunksRenderer.renderCodeAST('unified', result);
     const deletionsAST = this.hunksRenderer.renderCodeAST('deletions', result);
     const additionsAST = this.hunksRenderer.renderCodeAST('additions', result);
+    this.editor?.__captureFocusForDOMReplacement();
     if (unifiedAST != null) {
       shouldReplace =
         this.codeUnified == null ||
