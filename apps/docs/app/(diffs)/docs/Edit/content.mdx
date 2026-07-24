@@ -38,10 +38,10 @@ and correct” flows with generative code changes.
 ### Demo
 
 To enable edit mode on a `File` instance, import `Editor` from
-`@pierre/diffs/editor`. It is intentionally separate from the core bundle so you
+`@pierre/diffs/edit`. It is intentionally separate from the core bundle so you
 can lazy-load it when editing is optional.
 
-<EditorDemo prerenderedFile={editorDemoFile} />
+<EditDemo prerenderedFile={editDemoFile} />
 
 ### How It Works
 
@@ -158,11 +158,12 @@ flag. The provider does not own an editor instance. Each editable `File`,
 item creates its own editor when an edit session starts. Standalone surface DOM
 and imperative file/diff instances stay mounted across the toggle.
 
-Pass creation-time callbacks and behavior through the surface's `editOptions`. A
-provider can add shared defaults by spreading them before the surface options,
+Pass creation-time callbacks and behavior through the surface's `editorOptions`.
+A provider can add shared defaults by spreading them before the surface options,
 so the surface wins. Keep factories and object props stable: define static
 values at module scope, or use `useCallback` for factories and callbacks and
-`useMemo` for `options` and `editOptions` when they depend on component values.
+`useMemo` for `options` and `editorOptions` when they depend on component
+values.
 
 ```tsx
 const createEditor = useCallback<CreateEditor<undefined>>(
@@ -174,7 +175,7 @@ const createEditor = useCallback<CreateEditor<undefined>>(
   []
 );
 
-const editOptions = useMemo<EditorOptions<undefined>>(
+const editorOptions = useMemo<EditorOptions<undefined>>(
   () => ({
     onChange: handleChange,
     onAttach(editor) {
@@ -189,12 +190,12 @@ const editOptions = useMemo<EditorOptions<undefined>>(
 // CodeView.
 return (
   <EditProvider createEditor={createEditor}>
-    <File file={file} edit={editing} editOptions={editOptions} />
+    <File file={file} edit={editing} editorOptions={editorOptions} />
   </EditProvider>
 );
 ```
 
-Changes to `createEditor` or `editOptions` do not disturb an active edit
+Changes to `createEditor` or `editorOptions` do not disturb an active edit
 session. Their latest values apply the next time `edit` transitions from false
 to true. Re-entering edit mode creates a fresh editor with fresh history and
 state. Sibling editable surfaces receive independent editors and callbacks; use
@@ -202,10 +203,10 @@ state. Sibling editable surfaces receive independent editors and callbacks; use
 selections, markers, save, or search. Use `Virtualizer` for large editable
 files. The `FileDiff` tab below shows the controlled annotation feedback loop.
 
-<EditorComponentTabs
-  fileExample={editorReactExample}
-  fileDiffExample={editorReactFileDiffExample}
-  multiFileDiffExample={editorReactMultiFileDiffExample}
+<EditComponentTabs
+  fileExample={editReactExample}
+  fileDiffExample={editReactFileDiffExample}
+  multiFileDiffExample={editReactMultiFileDiffExample}
 />
 
 ### Vanilla JS
@@ -216,9 +217,9 @@ large editable files. Keep any emitted annotation collection in your external
 source of truth before a later render. Call `cleanUp()` when the editor is
 removed. The `FileDiff` tab below includes this synchronization.
 
-<EditorComponentTabs
-  fileExample={editorVanillaFileExample}
-  fileDiffExample={editorVanillaFileDiffExample}
+<EditComponentTabs
+  fileExample={editVanillaFileExample}
+  fileDiffExample={editVanillaFileDiffExample}
 />
 
 ### CodeView
@@ -226,10 +227,10 @@ removed. The `FileDiff` tab below includes this synchronization.
 `CodeView` manages one `Editor` per editable item. In React, wrap it in the same
 app-level `EditProvider` used by other editable surfaces, set `edit: true` on an
 item, and pass creation-time item-editor behavior through the `CodeView`
-`editOptions` prop. In vanilla JS, pass `createEditor` in `CodeViewOptions`
+`editorOptions` prop. In vanilla JS, pass `createEditor` in `CodeViewOptions`
 instead. Increment the item's `version` whenever `edit` changes.
 
-`CodeView` uses item-aware callbacks instead of `editOptions.onChange`.
+`CodeView` uses item-aware callbacks instead of `editorOptions.onChange`.
 `onItemEditChange` receives the owning item with each live change: replace that
 item's annotations whenever the emitted array changes, and increment its
 `version`. This live update keeps annotation coordinates synchronized throughout
@@ -243,26 +244,26 @@ a fresh `cacheKey` and increment `version`; `CodeView` does not update item data
 for you.
 
 <CodeViewExampleTabs
-  reactExample={editorReactCodeViewExample}
-  vanillaExample={editorVanillaCodeViewExample}
+  reactExample={editReactCodeViewExample}
+  vanillaExample={editVanillaCodeViewExample}
 />
 
 Editors retain their document and history while items move in and out of the
 virtualized window.
 
-`editOptions` and provider-factory changes are creation-time inputs: active item
-sessions keep their current editor, while the latest values apply to the next
-item that enters edit mode. Simultaneously edited items always receive
+`editorOptions` and provider-factory changes are creation-time inputs: active
+item sessions keep their current editor, while the latest values apply to the
+next item that enters edit mode. Simultaneously edited items always receive
 independent editor instances.
 
 ### Autofocus on Attach
 
 Use `onAttach` to opt into initial caret placement. At this point the text
-document and editable DOM are ready. In React, pass a stable `editOptions`
+document and editable DOM are ready. In React, pass a stable `editorOptions`
 object to any editable surface, including `CodeView`:
 
 ```tsx
-const editOptions = useMemo<EditorOptions<undefined>>(
+const editorOptions = useMemo<EditorOptions<undefined>>(
   () => ({
     onAttach(editor) {
       editor.focus({ lineNumber: 'first-visible', preventScroll: true });
@@ -271,7 +272,7 @@ const editOptions = useMemo<EditorOptions<undefined>>(
   []
 );
 
-return <CodeView items={items} editOptions={editOptions} />;
+return <CodeView items={items} editorOptions={editorOptions} />;
 ```
 
 Vanilla `CodeView` can add the same behavior in its editor factory:
@@ -333,7 +334,7 @@ contents should start a fresh document.
 
 ```ts
 import type { EditorState, FileContents } from '@pierre/diffs';
-import { Editor, type IStateStorage } from '@pierre/diffs/editor';
+import { Editor, type IStateStorage } from '@pierre/diffs/edit';
 
 const editor = new Editor({
   persistState: true,
@@ -384,13 +385,13 @@ are useful for surfacing linter or language-server output alongside live edits.
 Each marker is positioned with zero-based `start` and `end` positions and a
 `severity` that drives its color and popover styling:
 
-<DocsCodeExample {...editorMarkerType} />
+<DocsCodeExample {...editMarkerType} />
 
 Call `editor.setMarkers(markers)` after the editor has attached to a surface
 (calling it before attaching throws). Inlining the array lets TypeScript check
 the `severity` literals against the `Marker` type without importing it.
 
-<DocsCodeExample {...editorMarkerExample} />
+<DocsCodeExample {...editMarkerExample} />
 
 Markers re-anchor as the document changes, so they stay attached to their text
 while you edit. Pass an empty array to clear them.
@@ -415,7 +416,7 @@ and you can re-read `canUndo` / `canRedo` to keep UI state in sync.
 Limit the stack size with `historyMaxEntries` in
 [Editor Options](#edit-mode-editor-options) (default: 100).
 
-<DocsCodeExample {...editorUndoRedoExample} />
+<DocsCodeExample {...editUndoRedoExample} />
 
 ### Using Worker Pool
 
@@ -428,19 +429,19 @@ vanilla JS, pass the pool as the second argument to `File` or `FileDiff`. In
 React, wrap your tree in `WorkerPoolContextProvider`. Then attach the editor as
 usual.
 
-<EditorWorkerPoolTabs
-  vanillaExample={editorWorkerPoolVanillaExample}
-  reactExample={editorWorkerPoolReactExample}
+<EditWorkerPoolTabs
+  vanillaExample={editWorkerPoolVanillaExample}
+  reactExample={editWorkerPoolReactExample}
 />
 
 ### Lazy Loading
 
-Because `@pierre/diffs/editor` is a standalone entry point, you can
-dynamic-import it only when the user enters edit mode. That keeps the initial
-page bundle smaller and can improve LCP (Largest Contentful Paint) on pages
-where editing is rare.
+Because `@pierre/diffs/edit` is a standalone entry point, you can dynamic-import
+it only when the user enters edit mode. That keeps the initial page bundle
+smaller and can improve LCP (Largest Contentful Paint) on pages where editing is
+rare.
 
-<DocsCodeExample {...editorLazyFileExample} />
+<DocsCodeExample {...editLazyFileExample} />
 
 ### Selection Action
 
@@ -452,14 +453,14 @@ the user creates a ranged selection. Programmatic `setSelections` and `setState`
 calls update the selection without opening the popover. The popover can hold any
 number of actions.
 
-<DocsCodeExample {...editorSelectionActionExample} />
+<DocsCodeExample {...editSelectionActionExample} />
 
 `renderSelectionAction` runs when the popover opens. Its context includes the
 active `selection`, the editable `textDocument`, helpers to read or modify the
 selection (`getSelectionText`, `replaceSelectionText`, `applyEdits`), and
 `close` to dismiss the popover:
 
-<DocsCodeExample {...editorSelectionActionContextType} />
+<DocsCodeExample {...editSelectionActionContextType} />
 
 ### Keyboard Shortcuts
 

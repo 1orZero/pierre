@@ -1,6 +1,6 @@
 'use client';
 
-import type { Editor } from '@pierre/diffs/editor';
+import type { Editor } from '@pierre/diffs/edit';
 import { File } from '@pierre/diffs/react';
 import type { PreloadedFileResult } from '@pierre/diffs/ssr';
 import { useEffect, useMemo, useRef } from 'react';
@@ -120,7 +120,7 @@ export function FindDemo({ prerenderedFile }: FindDemoProps) {
     };
   }, []);
 
-  const editOptions = useMemo(
+  const editorOptions = useMemo(
     () => ({
       onAttach(editor: Editor<undefined>) {
         editorRef.current = editor;
@@ -135,7 +135,7 @@ export function FindDemo({ prerenderedFile }: FindDemoProps) {
         {...prerenderedFile}
         className="diff-container max-h-[420px] overflow-auto"
         edit
-        editOptions={editOptions}
+        editorOptions={editorOptions}
       />
     </div>
   );

@@ -8,7 +8,7 @@ import {
 
 import { File, type FileOptions } from '../../components/File';
 import { VirtualizedFile } from '../../components/VirtualizedFile';
-import type { EditorOptions } from '../../editor';
+import type { EditorOptions } from '../../edit';
 import type { GetHoveredLineResult } from '../../managers/InteractionManager';
 import type {
   FileContents,
@@ -29,7 +29,7 @@ const useIsomorphicLayoutEffect =
 interface UseFileInstanceProps<LAnnotation> {
   file: FileContents;
   options: FileOptions<LAnnotation> | undefined;
-  editOptions: EditorOptions<LAnnotation> | undefined;
+  editorOptions: EditorOptions<LAnnotation> | undefined;
   lineAnnotations: LineAnnotation<LAnnotation>[] | undefined;
   selectedLines: SelectedLineRange | null | undefined;
   prerenderedHTML: string | undefined;
@@ -52,7 +52,7 @@ interface UseFileInstanceReturn {
 export function useFileInstance<LAnnotation>({
   file,
   options,
-  editOptions,
+  editorOptions,
   lineAnnotations,
   selectedLines,
   prerenderedHTML,
@@ -146,7 +146,7 @@ export function useFileInstance<LAnnotation>({
       if (createEditor === undefined) {
         throw new Error('File: EditContext is not attached');
       }
-      const editor = createEditor(editOptions ?? {});
+      const editor = createEditor(editorOptions ?? {});
       if (editor == null) {
         throw new Error(
           'File: EditProvider.createEditor must return an editor instance'

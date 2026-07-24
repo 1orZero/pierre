@@ -18,14 +18,14 @@ const editableDemoOptions: FileOptions<undefined> = {
   useTokenTransformer: true,
 };
 
-// The file rendered by the interactive `<EditorDemo />` on the Editor page.
+// The file rendered by the interactive `<EditDemo />` on the Edit page.
 // Preloaded server-side so the surface is highlighted in the initial HTML
 // instead of flashing in after the client attaches the editor.
-export const EDITOR_DEMO_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_DEMO_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editable-demo.ts',
     contents: `import { VirtualizedFile } from '@pierre/diffs';
-import { Editor } from '@pierre/diffs/editor';
+import { Editor } from '@pierre/diffs/edit';
 
 const fileInstance = new VirtualizedFile({
   theme: { dark: 'pierre-dark', light: 'pierre-light' },
@@ -53,7 +53,7 @@ dispose();
   options: editableDemoOptions,
 };
 
-export const EDITOR_VANILLA_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_VANILLA_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_vanilla_file.ts',
     contents: `import {
@@ -61,7 +61,7 @@ export const EDITOR_VANILLA_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
   VirtualizedFile,
   type FileContents,
 } from '@pierre/diffs';
-import { Editor } from '@pierre/diffs/editor';
+import { Editor } from '@pierre/diffs/edit';
 
 const root = document.getElementById('file-scroll-root');
 const content = document.getElementById('file-scroll-content');
@@ -101,7 +101,7 @@ editor.cleanUp();`,
   options,
 };
 
-export const EDITOR_VANILLA_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_VANILLA_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_vanilla_file_diff.ts',
     contents: `import {
@@ -111,7 +111,7 @@ export const EDITOR_VANILLA_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
   VirtualizedFileDiff,
   type FileContents,
 } from '@pierre/diffs';
-import { Editor } from '@pierre/diffs/editor';
+import { Editor } from '@pierre/diffs/edit';
 
 interface ThreadMetadata {
   id: string;
@@ -194,7 +194,7 @@ editor.cleanUp();`,
   options,
 };
 
-export const EDITOR_VANILLA_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_VANILLA_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_vanilla_code_view.ts',
     contents: `import {
@@ -203,7 +203,7 @@ export const EDITOR_VANILLA_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
   parseDiffFromFile,
   type CodeViewItem,
 } from '@pierre/diffs';
-import { Editor } from '@pierre/diffs/editor';
+import { Editor } from '@pierre/diffs/edit';
 
 interface ThreadMetadata {
   id: string;
@@ -319,7 +319,7 @@ window.addEventListener('beforeunload', () => {
   options,
 };
 
-export const EDITOR_LAZY_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_LAZY_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_lazy_file.ts',
     contents: `import type { VirtualizedFile } from '@pierre/diffs';
@@ -327,7 +327,7 @@ export const EDITOR_LAZY_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
 const button = document.getElementById('edit-button');
 
 async function edit(fileInstance: VirtualizedFile): Promise<() => void> {
-  const { Editor } = await import('@pierre/diffs/editor');
+  const { Editor } = await import('@pierre/diffs/edit');
   const editor = new Editor({
     onChange(file, lineAnnotations) {
       console.log('change', file.name, lineAnnotations);
@@ -344,10 +344,10 @@ button.addEventListener('click', () => {
   options,
 };
 
-export const EDITOR_SELECTION_ACTION_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_SELECTION_ACTION_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_selection_action.ts',
-    contents: `import { Editor } from '@pierre/diffs/editor';
+    contents: `import { Editor } from '@pierre/diffs/edit';
 
 const editor = new Editor({
   enabledSelectionAction: true,
@@ -371,7 +371,7 @@ const editor = new Editor({
   options,
 };
 
-export const EDITOR_SELECTION_ACTION_CONTEXT_TYPE: PreloadFileOptions<undefined> =
+export const EDIT_SELECTION_ACTION_CONTEXT_TYPE: PreloadFileOptions<undefined> =
   {
     file: {
       name: 'selection_action_context.ts',
@@ -393,7 +393,7 @@ export const EDITOR_SELECTION_ACTION_CONTEXT_TYPE: PreloadFileOptions<undefined>
     options,
   };
 
-export const EDITOR_MARKER_TYPE: PreloadFileOptions<undefined> = {
+export const EDIT_MARKER_TYPE: PreloadFileOptions<undefined> = {
   file: {
     name: 'marker.ts',
     contents: `type MarkerSeverity = 'error' | 'warning' | 'info' | 'hint';
@@ -416,10 +416,10 @@ interface Marker {
   options,
 };
 
-export const EDITOR_MARKER_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_MARKER_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_markers.ts',
-    contents: `import { Editor } from '@pierre/diffs/editor';
+    contents: `import { Editor } from '@pierre/diffs/edit';
 
 const editor = new Editor();
 editor.edit(fileInstance);
@@ -450,11 +450,11 @@ editor.setMarkers([]);`,
   options,
 };
 
-export const EDITOR_UNDO_REDO_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_UNDO_REDO_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_undo_redo.tsx',
     contents: `import type { FileContents } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import { EditProvider, File } from '@pierre/diffs/react';
 import { useMemo, useRef, useState } from 'react';
 
@@ -467,12 +467,12 @@ function createEditor(options: EditorOptions<undefined>) {
   return new Editor(options);
 }
 
-export function EditorWithHistoryToolbar() {
+export function EditableFileWithHistoryToolbar() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
   const editorRef = useRef<Editor<undefined> | null>(null);
-  const editOptions = useMemo<EditorOptions<undefined>>(
+  const editorOptions = useMemo<EditorOptions<undefined>>(
     () => ({
       onAttach(editor) {
         editorRef.current = editor;
@@ -503,7 +503,7 @@ export function EditorWithHistoryToolbar() {
       <File
         file={file}
         edit
-        editOptions={editOptions}
+        editorOptions={editorOptions}
       />
     </EditProvider>
   );
@@ -512,11 +512,11 @@ export function EditorWithHistoryToolbar() {
   options,
 };
 
-export const EDITOR_REACT_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_REACT_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_react.tsx',
     contents: `import type { FileContents, FileOptions } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import { EditProvider, File, Virtualizer } from '@pierre/diffs/react';
 import { useMemo, useState } from 'react';
 
@@ -543,9 +543,9 @@ function createEditor(options: EditorOptions<undefined>) {
   return new Editor(options);
 }
 
-export function EditorComponent() {
+export function EditableFile() {
   const [editable, setEditable] = useState(true);
-  const editOptions = useMemo<EditorOptions<undefined>>(
+  const editorOptions = useMemo<EditorOptions<undefined>>(
     () => ({
       onChange(file, lineAnnotations) {
         console.log('change', file.name, lineAnnotations);
@@ -568,7 +568,7 @@ export function EditorComponent() {
           file={file}
           options={fileOptions}
           edit={editable}
-          editOptions={editOptions}
+          editorOptions={editorOptions}
         />
       </Virtualizer>
     </EditProvider>
@@ -578,7 +578,7 @@ export function EditorComponent() {
   options,
 };
 
-export const EDITOR_REACT_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_REACT_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_react_file_diff.tsx',
     contents: `import {
@@ -588,7 +588,7 @@ export const EDITOR_REACT_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
   type FileDiffMetadata,
   type FileDiffOptions,
 } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import {
   EditProvider,
   FileDiff,
@@ -629,13 +629,13 @@ function createEditor(options: EditorOptions<ThreadMetadata>) {
   return new Editor(options);
 }
 
-export function EditorComponent() {
+export function EditableFileDiff() {
   const [editable, setEditable] = useState(true);
   const [annotations, setAnnotations] = useState(initialAnnotations);
   const annotationsRef = useRef(initialAnnotations);
   // Key interaction state by stable metadata rather than line coordinates.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const editOptions = useMemo<EditorOptions<ThreadMetadata>>(
+  const editorOptions = useMemo<EditorOptions<ThreadMetadata>>(
     () => ({
       onChange(_file, nextAnnotations) {
         if (
@@ -669,7 +669,7 @@ export function EditorComponent() {
           lineAnnotations={annotations}
           options={fileDiffOptions}
           edit={editable}
-          editOptions={editOptions}
+          editorOptions={editorOptions}
           renderAnnotation={(annotation) => {
             const id = annotation.metadata.id;
             return (
@@ -694,7 +694,7 @@ export function EditorComponent() {
   options,
 };
 
-export const EDITOR_REACT_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_REACT_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_react_code_view.tsx',
     contents: `import {
@@ -705,7 +705,7 @@ export const EDITOR_REACT_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
   type FileContents,
   type LineAnnotation,
 } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import { CodeView, EditProvider } from '@pierre/diffs/react';
 import { useCallback, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -742,7 +742,7 @@ const initialItems: CodeViewItem<ThreadMetadata>[] = [
 
 const codeViewStyle = { height: '24rem', overflow: 'auto' } as const;
 
-const editOptions: EditorOptions<ThreadMetadata> = {
+const editorOptions: EditorOptions<ThreadMetadata> = {
   onAttach(editor) {
     editor.focus({ lineNumber: 'first-visible', preventScroll: true });
   },
@@ -834,7 +834,7 @@ export function EditableCodeView() {
       <CodeView
         items={items}
         style={codeViewStyle}
-        editOptions={editOptions}
+        editorOptions={editorOptions}
         onItemEditChange={syncAnnotations}
         onItemEditComplete={commitEdit}
         renderAnnotation={(annotation) => (
@@ -848,12 +848,11 @@ export function EditableCodeView() {
   options,
 };
 
-export const EDITOR_WORKER_POOL_VANILLA_EXAMPLE: PreloadFileOptions<undefined> =
-  {
-    file: {
-      name: 'editor_worker_pool_vanilla.ts',
-      contents: `import { File } from '@pierre/diffs';
-import { Editor } from '@pierre/diffs/editor';
+export const EDIT_WORKER_POOL_VANILLA_EXAMPLE: PreloadFileOptions<undefined> = {
+  file: {
+    name: 'editor_worker_pool_vanilla.ts',
+    contents: `import { File } from '@pierre/diffs';
+import { Editor } from '@pierre/diffs/edit';
 import { getOrCreateWorkerPoolSingleton } from '@pierre/diffs/worker';
 import { workerFactory } from './utils/workerFactory';
 
@@ -876,17 +875,17 @@ fileInstance.render({
 
 const editor = new Editor();
 editor.edit(fileInstance);`,
-    },
-    options,
-  };
+  },
+  options,
+};
 
-export const EDITOR_WORKER_POOL_REACT_EXAMPLE: PreloadFileOptions<undefined> = {
+export const EDIT_WORKER_POOL_REACT_EXAMPLE: PreloadFileOptions<undefined> = {
   file: {
     name: 'editor_worker_pool_react.tsx',
     contents: `'use client';
 
 import type { FileContents } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import {
   EditProvider,
   File,
@@ -909,7 +908,7 @@ function createEditor(options: EditorOptions<undefined>) {
   return new Editor(options);
 }
 
-export function EditorWithWorkerPool() {
+export function EditableFileWithWorkerPool() {
   // This example is self-contained. Apps should usually mount EditProvider near
   // the root so its factory is available to every editable File, diff, and
   // CodeView.
@@ -937,7 +936,7 @@ export const EDITOR_OPTIONS_TYPE: PreloadFileOptions<undefined> = {
   FileContents,
   LineAnnotation,
 } from '@pierre/diffs';
-import { Editor, type IStateStorage } from '@pierre/diffs/editor';
+import { Editor, type IStateStorage } from '@pierre/diffs/edit';
 
 interface EditorOptions<LAnnotation> {
   // Max undo stack entries
@@ -1013,7 +1012,7 @@ export const EDITOR_PUBLIC_API: PreloadFileOptions<undefined> = {
   type EditorState,
   type FileContents,
 } from '@pierre/diffs';
-import { Editor, type EditorFocusOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorFocusOptions } from '@pierre/diffs/edit';
 
 // Editor
 // Most methods require an attached surface via edit().
@@ -1127,7 +1126,7 @@ editor.redo();
   options,
 };
 
-export const EDITOR_REACT_MULTI_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> =
+export const EDIT_REACT_MULTI_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> =
   {
     file: {
       name: 'editor_react_multi_file_diff.tsx',
@@ -1135,7 +1134,7 @@ export const EDITOR_REACT_MULTI_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined>
   FileContents,
   FileDiffOptions,
 } from '@pierre/diffs';
-import { Editor, type EditorOptions } from '@pierre/diffs/editor';
+import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import {
   EditProvider,
   MultiFileDiff,
@@ -1169,9 +1168,9 @@ function createEditor(options: EditorOptions<undefined>) {
   return new Editor(options);
 }
 
-export function EditorComponent() {
+export function EditableMultiFileDiff() {
   const [editable, setEditable] = useState(true);
-  const editOptions = useMemo<EditorOptions<undefined>>(
+  const editorOptions = useMemo<EditorOptions<undefined>>(
     () => ({
       onChange(file, lineAnnotations) {
         console.log('change', file.name, lineAnnotations);
@@ -1194,7 +1193,7 @@ export function EditorComponent() {
           newFile={newFile}
           options={fileDiffOptions}
           edit={editable}
-          editOptions={editOptions}
+          editorOptions={editorOptions}
         />
       </Virtualizer>
     </EditProvider>
