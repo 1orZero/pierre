@@ -7,6 +7,7 @@
   "host_permissions": [
     "https://github.com/*",
     "https://api.github.com/*",
+    "https://patch-diff.githubusercontent.com/*",
     "https://diffs.veraze.io/*",
     "http://localhost:3692/*"
   ],

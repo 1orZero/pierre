@@ -19,7 +19,12 @@ export interface FetchGitHubDiffResult {
   status: number;
 }
 
-function getGitHubApiUrl(sourceUrl: string): string | null {
+interface GitHubDiffUrls {
+  apiUrl: string;
+  webDiffUrl: string;
+}
+
+function getGitHubDiffUrls(sourceUrl: string): GitHubDiffUrls | null {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(sourceUrl);
@@ -34,22 +39,54 @@ function getGitHubApiUrl(sourceUrl: string): string | null {
   const path = normalizeGitHubPath(parsedUrl.pathname);
   if (path == null) return null;
 
+  let apiUrl: string | null = null;
+
   const pullMatch = PULL_PATTERN.exec(path);
   if (pullMatch != null) {
-    return `${GITHUB_API_ORIGIN}/repos/${pullMatch[1]}/${pullMatch[2]}/pulls/${pullMatch[3]}`;
+    apiUrl = `${GITHUB_API_ORIGIN}/repos/${pullMatch[1]}/${pullMatch[2]}/pulls/${pullMatch[3]}`;
   }
 
   const commitMatch = COMMIT_PATTERN.exec(path);
   if (commitMatch != null) {
-    return `${GITHUB_API_ORIGIN}/repos/${commitMatch[1]}/${commitMatch[2]}/commits/${commitMatch[3]}`;
+    apiUrl = `${GITHUB_API_ORIGIN}/repos/${commitMatch[1]}/${commitMatch[2]}/commits/${commitMatch[3]}`;
   }
 
   const compareMatch = COMPARE_PATTERN.exec(path);
   if (compareMatch != null) {
-    return `${GITHUB_API_ORIGIN}/repos/${compareMatch[1]}/${compareMatch[2]}/compare/${compareMatch[3]}`;
+    apiUrl = `${GITHUB_API_ORIGIN}/repos/${compareMatch[1]}/${compareMatch[2]}/compare/${compareMatch[3]}`;
   }
 
-  return null;
+  if (apiUrl == null) return null;
+
+  // Both URLs derive from the same normalized path so the web fallback can
+  // never fetch an attacker-controlled URL with the user's session cookies.
+  return {
+    apiUrl,
+    webDiffUrl: `https://${GITHUB_HOST}${path}.diff`,
+  };
+}
+
+// The GitHub diff API caps diffs at 300 changed files and returns 406 for
+// larger diffs. The plain web endpoint (github.com/{path}.diff) has no such
+// cap but requires the user's logged-in browser session cookies.
+async function fetchWebDiffFallback(
+  fetchFn: FetchGitHubDiffOptions['fetch'],
+  webDiffUrl: string
+): Promise<FetchGitHubDiffResult | null> {
+  try {
+    const response = await fetchFn(webDiffUrl, {
+      cache: 'no-store',
+      credentials: 'include',
+      redirect: 'follow',
+    });
+    if (!response.ok) return null;
+    const body = await response.text();
+    // A non-diff body (e.g. an HTML login page) is a failure.
+    if (!body.startsWith('diff --git')) return null;
+    return { body, ok: true, status: 200 };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchGitHubDiff(
@@ -64,8 +101,8 @@ export async function fetchGitHubDiff(
     };
   }
 
-  const apiUrl = getGitHubApiUrl(options.sourceUrl);
-  if (apiUrl == null) {
+  const urls = getGitHubDiffUrls(options.sourceUrl);
+  if (urls == null) {
     return {
       body: 'Unsupported GitHub diff URL.',
       ok: false,
@@ -75,7 +112,7 @@ export async function fetchGitHubDiff(
 
   let response: Response;
   try {
-    response = await options.fetch(apiUrl, {
+    response = await options.fetch(urls.apiUrl, {
       cache: 'no-store',
       headers: {
         Accept: GITHUB_DIFF_ACCEPT,
@@ -90,8 +127,9 @@ export async function fetchGitHubDiff(
     };
   }
 
+  let result: FetchGitHubDiffResult;
   try {
-    return {
+    result = {
       body: await response.text(),
       ok: response.ok,
       status: response.status,
@@ -103,4 +141,13 @@ export async function fetchGitHubDiff(
       status: 502,
     };
   }
+
+  // 406 means the API refused the diff (over 300 changed files); try the
+  // uncapped web endpoint, keeping the original API result on any failure.
+  if (result.status === 406) {
+    const fallback = await fetchWebDiffFallback(options.fetch, urls.webDiffUrl);
+    if (fallback != null) return fallback;
+  }
+
+  return result;
 }
