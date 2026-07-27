@@ -33,6 +33,7 @@ import {
   formatDiffsHubLineHash,
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
+import { getPatchLoadErrorMessage } from '@/lib/patchLoadErrorMessage';
 import {
   getStreamedPatchMetadata,
   streamGitPatchFiles,
@@ -51,8 +52,6 @@ const STREAM_INITIAL_PUBLISH_INTERVAL_MS = 500;
 const STREAM_WORK_BUDGET_MS = 8;
 const STREAM_TREE_PUBLISH_FILE_BATCH_SIZE = 1_000;
 const STREAM_TREE_PUBLISH_INTERVAL_MS = 1_000;
-const GENERIC_PATCH_LOAD_ERROR_MESSAGE =
-  'We couldn’t load that diff. Check the URL and try again.';
 
 interface UsePatchLoaderOptions {
   collapseMode: 'expanded' | 'collapsed';
@@ -477,7 +476,7 @@ export function usePatchLoader({
           return;
         }
         console.warn('Failed to load diff', error);
-        setErrorMessage(GENERIC_PATCH_LOAD_ERROR_MESSAGE);
+        setErrorMessage(getPatchLoadErrorMessage(error));
         setLoadState('error');
       }
     }
