@@ -111,6 +111,7 @@ export class FileRenderer<LAnnotation = undefined> {
   private computedLang: SupportedLanguages = 'text';
   private lineAnnotations: AnnotationLineMap<LAnnotation> = {};
   private lineCache: LineCache | undefined;
+  private pendingStructuralRows: Map<number, HASTElement> | undefined;
   private textDocumentCache = new WeakMap<FileContents, DiffsTextDocument>();
 
   constructor(
@@ -204,6 +205,7 @@ export class FileRenderer<LAnnotation = undefined> {
 
   public clearRenderCache(): void {
     this.syncEditedContentsToFile();
+    this.pendingStructuralRows = undefined;
     const renderCache = this.renderCache;
     this.renderCache = undefined;
     if (
@@ -299,8 +301,10 @@ export class FileRenderer<LAnnotation = undefined> {
 
   public updateRenderCache(
     dirtyLines: Map<number, Array<HighlightedToken>>,
-    themeType: 'dark' | 'light'
+    themeType: 'dark' | 'light',
+    lineCountChangeInFlight = false
   ): void {
+    this.pendingStructuralRows = undefined;
     if (this.renderCache == null) {
       return;
     }
@@ -308,25 +312,30 @@ export class FileRenderer<LAnnotation = undefined> {
     if (result == null) {
       return;
     }
-    // Mirror DiffHunksRenderer keeping `diff.additionLines` in sync during an
-    // edit session: patch the split-line cache with the edited line text so
-    // recycle() can persist the session's contents into the file. The line
-    // cache includes the document's trailing empty line, so editor line
-    // indexes map 1:1; lines past the cache (document grew) are handled by
-    // applyDocumentChange instead.
+    const pendingStructuralRows = lineCountChangeInFlight
+      ? new Map<number, HASTElement>()
+      : undefined;
+    this.pendingStructuralRows = pendingStructuralRows;
+    // Same-line edits can update the document cache immediately. Structural
+    // rows use post-edit indexes, so hold them until applyDocumentChange has
+    // shifted the old cache; writing now would overwrite rows that must move.
     const lineCache =
       this.lineCache != null && isLineCacheForFile(this.lineCache, file)
         ? this.lineCache
         : undefined;
     for (const [line, tokens] of dirtyLines) {
-      if (lineCache != null && line < lineCache.lines.length) {
+      if (
+        pendingStructuralRows === undefined &&
+        lineCache != null &&
+        line < lineCache.lines.length
+      ) {
         const lineText = tokens.map((token) => token[2]).join('');
         lineCache.lines[line] = applyLineTextWithNewline(
           lineCache.lines[line] ?? '',
           lineText
         );
       }
-      result.code[line] = {
+      const row: HASTElement = {
         type: 'element',
         tagName: 'div',
         properties: {
@@ -357,6 +366,11 @@ export class FileRenderer<LAnnotation = undefined> {
           };
         }),
       };
+      if (pendingStructuralRows !== undefined) {
+        pendingStructuralRows.set(line, row);
+      } else {
+        result.code[line] = row;
+      }
     }
 
     result.baseThemeType = themeType;
@@ -365,6 +379,8 @@ export class FileRenderer<LAnnotation = undefined> {
 
   // normally triggered by the host when the document line count changes
   public applyDocumentChange(textDocument: DiffsTextDocument): void {
+    const pendingStructuralRows = this.pendingStructuralRows;
+    this.pendingStructuralRows = undefined;
     if (this.renderCache == null) {
       return undefined;
     }
@@ -376,11 +392,49 @@ export class FileRenderer<LAnnotation = undefined> {
     if (result == null) {
       return undefined;
     }
-    if (result.code.length !== textDocument.lineCount) {
-      result.code.length = Math.min(result.code.length, textDocument.lineCount);
-      for (let i = result.code.length; i < textDocument.lineCount; i++) {
-        // prefill lines with plain text content
-        result.code.push({
+    // Structural edits renumber cached HAST rows. Keep the unchanged prefix
+    // and suffix, and plain-fill only the window that still needs tokenizing.
+    const previousLines =
+      this.lineCache != null && isLineCacheForFile(this.lineCache, file)
+        ? this.lineCache.lines
+        : linesFromFileContents(file.contents);
+    const nextLines = linesFromFileContents(textDocument.getText());
+    if (previousLines.length !== nextLines.length) {
+      const maxShared = Math.min(previousLines.length, nextLines.length);
+      let prefix = 0;
+      while (
+        prefix < maxShared &&
+        previousLines[prefix] === nextLines[prefix]
+      ) {
+        prefix++;
+      }
+      let suffix = 0;
+      while (
+        suffix < maxShared - prefix &&
+        previousLines[previousLines.length - 1 - suffix] ===
+          nextLines[nextLines.length - 1 - suffix]
+      ) {
+        suffix++;
+      }
+
+      const previousCode = result.code;
+      result.code = new Array(nextLines.length);
+      for (let i = 0; i < prefix; i++) {
+        result.code[i] = previousCode[i];
+      }
+      for (let i = 0; i < suffix; i++) {
+        result.code[nextLines.length - 1 - i] =
+          previousCode[previousLines.length - 1 - i];
+      }
+      if (pendingStructuralRows !== undefined) {
+        for (const [line, row] of pendingStructuralRows) {
+          if (line < nextLines.length) {
+            result.code[line] = row;
+          }
+        }
+      }
+      for (let i = prefix; i < nextLines.length - suffix; i++) {
+        result.code[i] ??= {
           type: 'element',
           tagName: 'div',
           properties: {
@@ -403,18 +457,23 @@ export class FileRenderer<LAnnotation = undefined> {
               ],
             },
           ],
-        });
+        };
+      }
+      for (let i = 0; i < result.code.length; i++) {
+        const line = result.code[i];
+        if (line?.type === 'element') {
+          line.properties['data-line'] = i + 1;
+          line.properties['data-line-index'] = i;
+        }
       }
       this.renderCache.isDirty = true;
     }
-    // A line-count change invalidates the per-line sync updateRenderCache
-    // performs, so rebuild the split-line cache from the document wholesale
-    // (the file analog of DiffHunksRenderer re-splitting `additionLines`).
+    // Replace the old split-line cache with the authoritative edited document.
     this.lineCache = {
       cacheKey: file.cacheKey,
       file,
       sourceContents: file.contents,
-      lines: linesFromFileContents(textDocument.getText()),
+      lines: nextLines,
     };
     this.textDocumentCache.set(file, textDocument);
   }
