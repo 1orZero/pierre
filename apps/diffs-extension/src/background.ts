@@ -3,7 +3,7 @@ import {
   STORAGE_KEYS,
   TARGET_ORIGINS,
 } from './lib/config';
-import { fetchGitHubDiff } from './lib/diff-service';
+import { fetchGitHubDiff, fetchGitHubPullTitle } from './lib/diff-service';
 import { buildDynamicRules, RULE_IDS } from './lib/rules';
 import { getExtensionStorage, toggleEnabled } from './lib/storage';
 
@@ -74,16 +74,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         target,
       })
     );
-    const result = await fetchGitHubDiff({
+    const options = {
       fetch: fetch.bind(globalThis),
       sourceUrl: (message as { sourceUrl: string }).sourceUrl,
       token,
-    });
+    };
+    const [result, title] = await Promise.all([
+      fetchGitHubDiff(options),
+      fetchGitHubPullTitle(options),
+    ]);
     console.info(
       '[Diffs Extension] fetchDiff result',
       JSON.stringify({ ok: result.ok, status: result.status, target })
     );
-    sendResponse(result);
+    sendResponse(title == null ? result : { ...result, title });
   })();
   return true;
 });

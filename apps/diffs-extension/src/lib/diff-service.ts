@@ -3,6 +3,7 @@ import { normalizeGitHubPath } from './url';
 const GITHUB_API_ORIGIN = 'https://api.github.com';
 const GITHUB_DIFF_ACCEPT = 'application/vnd.github.v3.diff';
 const GITHUB_HOST = 'github.com';
+const GITHUB_JSON_ACCEPT = 'application/vnd.github+json';
 const PULL_PATTERN = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)$/;
 const COMMIT_PATTERN = /^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]{7,40})$/i;
 const COMPARE_PATTERN = /^\/([^/]+)\/([^/]+)\/compare\/(.+)$/;
@@ -21,6 +22,7 @@ export interface FetchGitHubDiffResult {
 
 interface GitHubDiffUrls {
   apiUrl: string;
+  pullRequestApiUrl?: string;
   webDiffUrl: string;
 }
 
@@ -40,10 +42,12 @@ function getGitHubDiffUrls(sourceUrl: string): GitHubDiffUrls | null {
   if (path == null) return null;
 
   let apiUrl: string | null = null;
+  let pullRequestApiUrl: string | undefined;
 
   const pullMatch = PULL_PATTERN.exec(path);
   if (pullMatch != null) {
     apiUrl = `${GITHUB_API_ORIGIN}/repos/${pullMatch[1]}/${pullMatch[2]}/pulls/${pullMatch[3]}`;
+    pullRequestApiUrl = apiUrl;
   }
 
   const commitMatch = COMMIT_PATTERN.exec(path);
@@ -62,8 +66,40 @@ function getGitHubDiffUrls(sourceUrl: string): GitHubDiffUrls | null {
   // never fetch an attacker-controlled URL with the user's session cookies.
   return {
     apiUrl,
+    pullRequestApiUrl,
     webDiffUrl: `https://${GITHUB_HOST}${path}.diff`,
   };
+}
+
+export async function fetchGitHubPullTitle(
+  options: FetchGitHubDiffOptions
+): Promise<string | undefined> {
+  const token = options.token.trim();
+  if (token === '') return undefined;
+
+  const pullRequestApiUrl = getGitHubDiffUrls(
+    options.sourceUrl
+  )?.pullRequestApiUrl;
+  if (pullRequestApiUrl == null) return undefined;
+
+  try {
+    const response = await options.fetch(pullRequestApiUrl, {
+      cache: 'no-store',
+      headers: {
+        Accept: GITHUB_JSON_ACCEPT,
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!response.ok) return undefined;
+
+    const data: unknown = await response.json();
+    if (typeof data !== 'object' || data === null) return undefined;
+    const title = (data as Record<string, unknown>).title;
+    return typeof title === 'string' && title !== '' ? title : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // The GitHub diff API caps diffs at 300 changed files and returns 406 for

@@ -1,8 +1,37 @@
 import { describe, expect, test } from 'bun:test';
 
-import { fetchGitHubDiff } from '../src/lib/diff-service';
+import { fetchGitHubDiff, fetchGitHubPullTitle } from '../src/lib/diff-service';
 
 describe('fetchGitHubDiff', () => {
+  test('fetches the PR title with the stored PAT', async () => {
+    let requestedUrl = '';
+    let requestedHeaders = new Headers();
+
+    const title = await fetchGitHubPullTitle({
+      fetch: (url, init) => {
+        requestedUrl =
+          url instanceof Request
+            ? url.url
+            : url instanceof URL
+              ? url.href
+              : url;
+        requestedHeaders = new Headers(init?.headers);
+        return Promise.resolve(Response.json({ title: 'Fix 中文 title ✨' }));
+      },
+      sourceUrl: 'https://github.com/owner/repo/pull/123',
+      token: 'github_pat_saved',
+    });
+
+    expect(requestedUrl).toBe(
+      'https://api.github.com/repos/owner/repo/pulls/123'
+    );
+    expect(requestedHeaders.get('Accept')).toBe('application/vnd.github+json');
+    expect(requestedHeaders.get('Authorization')).toBe(
+      'Bearer github_pat_saved'
+    );
+    expect(title).toBe('Fix 中文 title ✨');
+  });
+
   test('uses the GitHub diff API with the stored PAT', async () => {
     let requestedUrl = '';
     let requestedAuthorization = '';

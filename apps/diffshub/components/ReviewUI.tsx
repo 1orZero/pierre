@@ -30,6 +30,7 @@ import {
 } from '@/components/themeController';
 import { preloadAvatars } from '@/lib/annotation';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
+import { SITE_NAME } from '@/lib/site';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import type {
   CommentMetadata,
@@ -44,6 +45,8 @@ interface ReviewUIProps {
   initialUrl: string;
   path: string;
 }
+
+const DEFAULT_DOCUMENT_TITLE = `${SITE_NAME}, from Pierre`;
 
 export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
   // Provide the diffshub-scoped theme context, then render the body BELOW it so
@@ -171,6 +174,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     loadState,
     onLineLinkChange,
     onViewerReady,
+    pullRequestTitle,
     retryLoad,
     setCommentSections,
     treeSource,
@@ -182,6 +186,19 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     path,
     viewerRef,
   });
+
+  useEffect(() => {
+    if (pullRequestTitle == null) return;
+
+    const defaultTitle = document.title;
+    const prefix = defaultTitle.endsWith(DEFAULT_DOCUMENT_TITLE)
+      ? defaultTitle.slice(0, -DEFAULT_DOCUMENT_TITLE.length)
+      : '';
+    document.title = `${prefix}${pullRequestTitle}`;
+    return () => {
+      document.title = defaultTitle;
+    };
+  }, [pullRequestTitle]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');

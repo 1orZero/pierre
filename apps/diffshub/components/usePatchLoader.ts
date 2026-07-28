@@ -35,6 +35,10 @@ import {
 } from '@/lib/lineHash';
 import { getPatchLoadErrorMessage } from '@/lib/patchLoadErrorMessage';
 import {
+  decodePullRequestTitle,
+  PULL_REQUEST_TITLE_HEADER,
+} from '@/lib/pullRequestTitleHeader';
+import {
   getStreamedPatchMetadata,
   streamGitPatchFiles,
 } from '@/lib/streamGitPatchFiles';
@@ -71,6 +75,7 @@ interface UsePatchLoaderResult {
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
+  pullRequestTitle: string | null;
   retryLoad(): void;
   setCommentSections: Dispatch<SetStateAction<DiffsHubSavedCommentItem[]>>;
   treeSource: DiffsHubFileTreeSource | null;
@@ -101,6 +106,7 @@ export function usePatchLoader({
   >([]);
   const [loadState, setLoadState] = useState<ViewerLoadState>('fetching');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pullRequestTitle, setPullRequestTitle] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
   const requestIdRef = useRef(0);
@@ -233,6 +239,7 @@ export function usePatchLoader({
     setDiffStats(null);
     setCommentFileByItemId(null);
     setCommentSections([]);
+    setPullRequestTitle(null);
     onLoadStart();
     setErrorMessage(null);
     setLoadState('fetching');
@@ -284,6 +291,11 @@ export function usePatchLoader({
             detail.length > 0 ? detail : `Request failed (${response.status}).`
           );
         }
+        setPullRequestTitle(
+          decodePullRequestTitle(
+            response.headers.get(PULL_REQUEST_TITLE_HEADER)
+          )
+        );
 
         if (response.body == null) {
           console.time('--     reading patch');
@@ -517,6 +529,7 @@ export function usePatchLoader({
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,
+    pullRequestTitle,
     retryLoad,
     setCommentSections,
     treeSource,

@@ -1,6 +1,10 @@
 import { type NextRequest } from 'next/server';
 
 import { getGitHubTokenFromRequest } from '../githubAuth';
+import {
+  encodePullRequestTitle,
+  PULL_REQUEST_TITLE_HEADER,
+} from '@/lib/pullRequestTitleHeader';
 
 const CACHE_CONTROL = 'no-store';
 const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
@@ -8,6 +12,7 @@ const GITHUB_API_HOST = 'api.github.com';
 const GITHUB_HOST = 'github.com';
 const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
 const GITHUB_DIFF_ACCEPT = 'application/vnd.github.v3.diff';
+const GITHUB_JSON_ACCEPT = 'application/vnd.github+json';
 const NON_DIFF_RESPONSE_MESSAGE = 'GitHub did not return a diff for this URL.';
 const NON_WHITESPACE_PATTERN = /\S/;
 const RAW_GITHUB_DIFF_PATH_PATTERN =
@@ -51,6 +56,7 @@ const HIDDEN_PATCH_DOMAIN_RULES = [
 
 interface ResolvedPatchRequest {
   patchURL: string;
+  pullRequestApiURL?: string;
   sourceURL?: string;
   requestHeaders?: Record<string, string>;
 }
@@ -104,14 +110,24 @@ export async function GET(request: NextRequest) {
         upstreamHost: new URL(patchRequest.patchURL).hostname,
       })
     );
-    return await createPatchStreamResponse(
-      patchRequest.patchURL,
-      request.signal,
-      {
+    const [response, pullRequestTitle] = await Promise.all([
+      createPatchStreamResponse(patchRequest.patchURL, request.signal, {
         sourceURL: patchRequest.sourceURL ?? patchRequest.patchURL,
         requestHeaders: patchRequest.requestHeaders,
-      }
-    );
+      }),
+      fetchPullRequestTitle(
+        patchRequest.pullRequestApiURL,
+        patchRequest.requestHeaders?.Authorization,
+        request.signal
+      ),
+    ]);
+    if (pullRequestTitle != null) {
+      response.headers.set(
+        PULL_REQUEST_TITLE_HEADER,
+        encodePullRequestTitle(pullRequestTitle)
+      );
+    }
+    return response;
   } catch (error) {
     console.info(
       '[DiffsHub API] diff request failed',
@@ -201,9 +217,10 @@ function resolveGitHubPatchRequest(
     return undefined;
   }
 
+  const pullRequestApiURL = resolveGitHubPullApiURL(normalizedPath);
   const blobPatchURL = CACHED_BLOBS.get(removeDiffExtension(normalizedPath));
   if (blobPatchURL != null) {
-    return { patchURL: blobPatchURL };
+    return { patchURL: blobPatchURL, pullRequestApiURL };
   }
 
   if (token != null) {
@@ -211,6 +228,7 @@ function resolveGitHubPatchRequest(
     if (apiURL != null) {
       return {
         patchURL: apiURL,
+        pullRequestApiURL,
         sourceURL: `https://${GITHUB_HOST}${normalizedPath}`,
         requestHeaders: {
           Accept: GITHUB_DIFF_ACCEPT,
@@ -224,7 +242,10 @@ function resolveGitHubPatchRequest(
     normalizedPath.endsWith('.diff') || normalizedPath.endsWith('.patch')
       ? normalizedPath
       : `${normalizedPath}.diff`;
-  return { patchURL: `https://${GITHUB_HOST}${anonymousPath}` };
+  return {
+    patchURL: `https://${GITHUB_HOST}${anonymousPath}`,
+    pullRequestApiURL,
+  };
 }
 
 // Maps GitHub web paths onto the api.github.com REST endpoints whose `Accept:
@@ -232,9 +253,9 @@ function resolveGitHubPatchRequest(
 // diff as the unauthenticated `.diff` URL. Only the three shapes we render are
 // translated; everything else falls back to the anonymous path.
 function resolveGitHubApiURL(normalizedPath: string): string | undefined {
-  const pullMatch = GITHUB_PULL_NUMBER_PATTERN.exec(normalizedPath);
-  if (pullMatch != null) {
-    return `https://${GITHUB_API_HOST}/repos/${pullMatch[1]}/${pullMatch[2]}/pulls/${pullMatch[3]}`;
+  const pullRequestApiURL = resolveGitHubPullApiURL(normalizedPath);
+  if (pullRequestApiURL != null) {
+    return pullRequestApiURL;
   }
 
   const commitMatch = GITHUB_COMMIT_SHA_PATTERN.exec(normalizedPath);
@@ -248,6 +269,50 @@ function resolveGitHubApiURL(normalizedPath: string): string | undefined {
   }
 
   return undefined;
+}
+
+function resolveGitHubPullApiURL(normalizedPath: string): string | undefined {
+  const pullMatch = GITHUB_PULL_NUMBER_PATTERN.exec(normalizedPath);
+  if (pullMatch == null) {
+    return undefined;
+  }
+
+  return `https://${GITHUB_API_HOST}/repos/${pullMatch[1]}/${pullMatch[2]}/pulls/${pullMatch[3]}`;
+}
+
+async function fetchPullRequestTitle(
+  pullRequestApiURL: string | undefined,
+  authorization: string | undefined,
+  signal: AbortSignal
+): Promise<string | undefined> {
+  if (pullRequestApiURL == null) {
+    return undefined;
+  }
+
+  try {
+    const response = await fetch(pullRequestApiURL, {
+      cache: 'no-store',
+      headers: {
+        Accept: GITHUB_JSON_ACCEPT,
+        ...(authorization == null ? {} : { Authorization: authorization }),
+        'User-Agent': 'pierre-diffshub',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal,
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const data: unknown = await response.json();
+    if (typeof data !== 'object' || data === null) {
+      return undefined;
+    }
+    const title = (data as Record<string, unknown>).title;
+    return typeof title === 'string' && title !== '' ? title : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveDomainPatchURL(

@@ -115,7 +115,7 @@ window.addEventListener('message', (event) => {
       });
       const result = response as Pick<
         FetchDiffResponse,
-        'body' | 'ok' | 'status'
+        'body' | 'ok' | 'status' | 'title'
       >;
       window.postMessage(
         {
@@ -124,6 +124,7 @@ window.addEventListener('message', (event) => {
           ok: result.ok === true,
           status: typeof result.status === 'number' ? result.status : 500,
           tag: BRIDGE_TAG,
+          title: typeof result.title === 'string' ? result.title : undefined,
           type: 'fetchDiffResult',
         } satisfies FetchDiffResponse,
         window.location.origin

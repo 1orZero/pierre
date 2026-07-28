@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from 'react';
 
+import {
+  encodePullRequestTitle,
+  PULL_REQUEST_TITLE_HEADER,
+} from '@/lib/pullRequestTitleHeader';
+
 export const GITHUB_PAT_STORAGE_KEY = 'diffshub.githubPat';
 
 export interface GitHubViewer {
@@ -16,6 +21,7 @@ interface ExtensionDiffResponse {
   ok: boolean;
   status: number;
   tag: typeof DIFFS_EXTENSION_BRIDGE_TAG;
+  title?: string;
   type: 'fetchDiffResult';
 }
 interface ExtensionDiffStarted {
@@ -255,9 +261,16 @@ function fetchDiffThroughExtension(
         '[DiffsHub] extension bridge result',
         JSON.stringify({ ok: event.data.ok, status: event.data.status })
       );
+      const headers = new Headers({ 'Content-Type': 'text/plain' });
+      if (event.data.title != null) {
+        headers.set(
+          PULL_REQUEST_TITLE_HEADER,
+          encodePullRequestTitle(event.data.title)
+        );
+      }
       resolve(
         new Response(event.data.body, {
-          headers: { 'Content-Type': 'text/plain' },
+          headers,
           status: normalizeExtensionResponseStatus(event.data.status),
         })
       );
@@ -321,7 +334,8 @@ function isExtensionDiffResponse(
     message.id === id &&
     typeof message.body === 'string' &&
     typeof message.ok === 'boolean' &&
-    typeof message.status === 'number'
+    typeof message.status === 'number' &&
+    (message.title == null || typeof message.title === 'string')
   );
 }
 

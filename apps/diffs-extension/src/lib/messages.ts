@@ -13,6 +13,7 @@ export interface FetchDiffResponse {
   ok: boolean;
   status: number;
   tag: typeof BRIDGE_TAG;
+  title?: string;
   type: 'fetchDiffResult';
 }
 
@@ -56,7 +57,8 @@ export function isFetchDiffResponse(
     typeof message.id === 'string' &&
     typeof message.body === 'string' &&
     typeof message.ok === 'boolean' &&
-    typeof message.status === 'number'
+    typeof message.status === 'number' &&
+    (message.title == null || typeof message.title === 'string')
   );
 }
 
