@@ -55,7 +55,6 @@ import {
 } from '../utils/includesFileAnnotations';
 import { isFilePlainText } from '../utils/isFilePlainText';
 import { renderFileWithHighlighter } from '../utils/renderFileWithHighlighter';
-import { shouldUseTokenTransformer } from '../utils/shouldUseTokenTransformer';
 import type { WorkerPoolManager } from '../worker';
 
 type AnnotationLineMap<LAnnotation> = Record<
@@ -114,6 +113,13 @@ export class FileRenderer<LAnnotation = undefined> {
   private pendingStructuralRows: Map<number, HASTElement> | undefined;
   private textDocumentCache = new WeakMap<FileContents, DiffsTextDocument>();
 
+  // Edit-session state: while active, this renderer stays on the main thread
+  // with editor-compatible token markup — the editor's caret/selection
+  // mapping needs the token transformer, and the pool's global options are
+  // not guaranteed to produce it. The pool keeps serving every surface
+  // without a session.
+  private editSessionActive = false;
+
   constructor(
     public options: FileRendererOptions = { theme: DEFAULT_THEMES },
     private onRenderUpdate?: () => unknown,
@@ -151,11 +157,39 @@ export class FileRenderer<LAnnotation = undefined> {
     this.onRenderUpdate = undefined;
   }
 
+  /**
+   * Enter edit-session mode: rendering happens locally with the token
+   * transformer forced on, and worker-pool requests/results are suspended
+   * for this renderer. Called on every editor attach, including a re-attach
+   * after recycle.
+   */
+  public beginEditSession(): void {
+    this.editSessionActive = true;
+  }
+
+  /** Leave edit-session mode. Rendering returns to the pool when one works. */
+  public endEditSession(): void {
+    this.editSessionActive = false;
+  }
+
+  /**
+   * Ensures that the DOM is compatible with editor render updates
+   */
+  public editorRenderReady(): boolean {
+    return (
+      this.renderCache?.options.useTokenTransformer === true &&
+      this.renderCache.highlighted &&
+      this.renderCache.result != null
+    );
+  }
+
   public recycle(): void {
     this.clearRenderCache();
     this.highlighter = undefined;
     this.workerManager?.cleanUpTasks(this);
     this.lineCache = undefined;
+    // The session flag re-seeds on the next editor attach (beginEditSession).
+    this.endEditSession();
     // The edited-document cache is only coherent alongside the render cache
     // it patched. Keeping it across a recycle would let getLineCount report
     // edit-session line counts (keyed by the long-lived file object) against
@@ -238,7 +272,10 @@ export class FileRenderer<LAnnotation = undefined> {
       // FIXME(amadeus): Add support for renderRanges
       renderRange: undefined,
     };
-    if (this.workerManager?.isWorkingPool() === true) {
+    if (
+      !this.editSessionActive &&
+      this.workerManager?.isWorkingPool() === true
+    ) {
       if (this.renderCache.result == null && !massiveFile) {
         // We should only kick off a preload of the AST if we have a WorkerPool
         this.workerManager.highlightFileAST(this, file);
@@ -251,16 +288,32 @@ export class FileRenderer<LAnnotation = undefined> {
     }
   }
 
+  private getLocalHighlightTheme(): RenderFileOptions['theme'] {
+    return (
+      this.workerManager?.getFileRenderOptions().theme ??
+      this.options.theme ??
+      DEFAULT_THEMES
+    );
+  }
+
   private getRenderOptions(file: FileContents): GetRenderOptionsReturn {
     const options: RenderFileOptions = (() => {
       if (this.workerManager?.isWorkingPool() === true) {
-        return this.workerManager.getFileRenderOptions();
+        const poolOptions = this.workerManager.getFileRenderOptions();
+        // Active edit sessions require `useTokenTransformer: true`
+        if (
+          this.editSessionActive &&
+          poolOptions.useTokenTransformer !== true
+        ) {
+          return { ...poolOptions, useTokenTransformer: true };
+        }
+        return poolOptions;
       }
-      const { theme = DEFAULT_THEMES, tokenizeMaxLineLength = 1000 } =
-        this.options;
+      const { tokenizeMaxLineLength = 1000 } = this.options;
       return {
-        theme,
-        useTokenTransformer: shouldUseTokenTransformer(this.options),
+        theme: this.getLocalHighlightTheme(),
+        useTokenTransformer:
+          this.editSessionActive || this.options.useTokenTransformer === true,
         tokenizeMaxLineLength,
       };
     })();
@@ -495,6 +548,18 @@ export class FileRenderer<LAnnotation = undefined> {
       this.textDocumentCache = new WeakMap();
     }
     let { options, forceHighlight } = this.getRenderOptions(file);
+    // A dirty edit-session cache must not be superseded by a render with
+    // different options (e.g. a session ending and returning to pool
+    // options): persist the session text into the file and evict the stale
+    // pool cache entry first (clearRenderCache does both) so the rebuild
+    // below uses the edited contents instead of resurrecting pre-edit
+    // markup.
+    if (
+      this.renderCache?.isDirty === true &&
+      !areFileRenderOptionsEqual(options, this.renderCache.options)
+    ) {
+      this.clearRenderCache();
+    }
     const cache = this.getMatchingWorkerResultCache(file, options);
     if (cache != null && !this.hasHighlightedRenderCache(file, options)) {
       this.renderCache = {
@@ -523,7 +588,10 @@ export class FileRenderer<LAnnotation = undefined> {
       this.renderCache.renderRange,
       renderRange
     );
-    if (this.workerManager?.isWorkingPool() === true) {
+    if (
+      !this.editSessionActive &&
+      this.workerManager?.isWorkingPool() === true
+    ) {
       // Cache invalidation based on renderRange comparison
       if (
         forcePlainText ||
@@ -600,7 +668,7 @@ export class FileRenderer<LAnnotation = undefined> {
           if (this.renderCache != null) {
             this.renderCache.highlighted = false;
           }
-          this.onHighlightSuccess(file, result, options, !forcePlainText);
+          this.applyHighlightResult(file, result, options, !forcePlainText);
         });
       }
     }
@@ -633,7 +701,7 @@ export class FileRenderer<LAnnotation = undefined> {
       : (file.lang ?? getFiletypeFromFileName(file.name));
     const hasThemes =
       this.highlighter != null &&
-      hasResolvedThemes(getThemes(this.options.theme));
+      hasResolvedThemes(getThemes(this.getLocalHighlightTheme()));
     const hasLangs =
       forcePlainText ||
       (this.highlighter != null && areLanguagesAttached(this.computedLang));
@@ -811,12 +879,29 @@ export class FileRenderer<LAnnotation = undefined> {
 
   public async initializeHighlighter(): Promise<DiffsHighlighter> {
     this.highlighter = await getSharedHighlighter(
-      getHighlighterOptions(this.computedLang, this.options)
+      getHighlighterOptions(this.computedLang, {
+        theme: this.getLocalHighlightTheme(),
+        preferredHighlighter:
+          this.workerManager?.getPreferredHighlighter() ??
+          this.options.preferredHighlighter,
+      })
     );
     return this.highlighter;
   }
 
   public onHighlightSuccess(
+    file: FileContents,
+    result: ThemedFileResult,
+    options: RenderFileOptions,
+    highlighted = true
+  ): void {
+    if (this.editSessionActive) {
+      return;
+    }
+    this.applyHighlightResult(file, result, options, highlighted);
+  }
+
+  private applyHighlightResult(
     file: FileContents,
     result: ThemedFileResult,
     options: RenderFileOptions,
@@ -847,6 +932,9 @@ export class FileRenderer<LAnnotation = undefined> {
     file: FileContents,
     options: RenderFileOptions
   ): RenderFileResult | undefined {
+    if (this.editSessionActive) {
+      return undefined;
+    }
     const cache = this.workerManager?.getFileResultCache(file);
     if (cache == null || !areFileRenderOptionsEqual(options, cache.options)) {
       return undefined;
