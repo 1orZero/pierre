@@ -8,6 +8,7 @@ import type {
   DiffsEditor,
   DiffsHighlighter,
   EditableInstance,
+  EditorChangeEvent,
   EditorSelection,
   EditorState,
   FileContents,
@@ -17,6 +18,7 @@ import type {
   Position,
   Range,
   RenderRange,
+  ResolvedTextEdit,
   SelectionSide,
   TextEdit,
 } from '../types';
@@ -110,11 +112,7 @@ import {
   type IStateStorage,
   type PersistStateStorage,
 } from './stateStorage';
-import {
-  type ResolvedTextEdit,
-  TextDocument,
-  type TextDocumentChange,
-} from './textDocument';
+import { TextDocument, type TextDocumentChange } from './textDocument';
 import {
   getExpandedAsciiTextColumns,
   getUnicodeMeasurementOffsets,
@@ -232,9 +230,11 @@ export interface EditorOptions<LAnnotation> {
   /** Callback when the editor document changes. */
   onChange?: (
     file: FileContents,
-    lineAnnotations?:
+    lineAnnotations:
       | LineAnnotation<LAnnotation>[]
       | DiffLineAnnotation<LAnnotation>[]
+      | undefined,
+    event: EditorChangeEvent<LAnnotation>
   ) => void;
   /** Callback when the editor gains focus. */
   onFocus?: () => void;
@@ -5129,7 +5129,12 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     const fileRef = this.getFile();
     const onChange = this.#options.onChange;
     if (fileRef !== undefined && onChange !== undefined) {
-      onChange(fileRef, newLineAnnotations ?? this.#lineAnnotations);
+      const lineAnnotations = newLineAnnotations ?? this.#lineAnnotations;
+      onChange(fileRef, lineAnnotations, {
+        changes: change.changes,
+        file: fileRef,
+        lineAnnotations,
+      });
     }
 
     // Invalidate layout caches touched by the edit. Clear cached line Y

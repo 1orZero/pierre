@@ -1216,6 +1216,31 @@ export interface TextEdit {
   readonly newText: string;
 }
 
+/** Different with `TextEdit`, the range has been resolved to offsets. */
+export interface ResolvedTextEdit {
+  /** The start offset of the text change. */
+  readonly start: number;
+  /** The end offset of the text change. */
+  readonly end: number;
+  /** The string to be inserted. For delete operations use an empty string. */
+  readonly text: string;
+}
+
+/** A normalized text change reported by the editor. */
+export interface EditorChange extends ResolvedTextEdit {
+  /** The replaced range in the document before the change. */
+  range: Range;
+}
+
+/** The document state and normalized edits reported after an editor change. */
+export interface EditorChangeEvent<LAnnotation> {
+  changes: EditorChange[];
+  file: FileContents;
+  lineAnnotations?:
+    | LineAnnotation<LAnnotation>[]
+    | DiffLineAnnotation<LAnnotation>[];
+}
+
 /**
  * The direction of a selection.
  * -1: backward
@@ -1255,8 +1280,10 @@ export interface DiffsTextDocument {
 export interface CodeViewCreateEditorOptions<LAnnotation> {
   onChange: (
     file: FileContents,
-    lineAnnotations?:
+    lineAnnotations:
       | LineAnnotation<LAnnotation>[]
       | DiffLineAnnotation<LAnnotation>[]
+      | undefined,
+    event: EditorChangeEvent<LAnnotation>
   ) => void;
 }

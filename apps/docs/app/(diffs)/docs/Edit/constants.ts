@@ -937,6 +937,7 @@ export const EDITOR_OPTIONS_TYPE: PreloadFileOptions<undefined> = {
     contents: `import type {
   DiffLineAnnotation,
   DiffsEditableComponent,
+  EditorChangeEvent,
   FileContents,
   LineAnnotation,
 } from '@pierre/diffs';
@@ -993,9 +994,11 @@ interface EditorOptions<LAnnotation> {
   // existing array reference.
   onChange?: (
     file: FileContents,
-    lineAnnotations?:
+    lineAnnotations:
       | LineAnnotation<LAnnotation>[]
       | DiffLineAnnotation<LAnnotation>[]
+      | undefined,
+    event: EditorChangeEvent<LAnnotation>
   ) => void;
 
   // Fires when the editable content area gains focus (tab, click, or editor.focus()).
@@ -1004,6 +1007,27 @@ interface EditorOptions<LAnnotation> {
   // Fires when the editable content area loses focus.
   onBlur?: () => void;
 }`,
+  },
+  options,
+};
+
+export const EDIT_ON_CHANGE_EXAMPLE: PreloadFileOptions<undefined> = {
+  file: {
+    name: 'editor_on_change.ts',
+    contents: `import { Editor } from '@pierre/diffs/edit';
+
+new Editor({
+  onChange: (file, lineAnnotations, event) => {
+    // \`event.changes\` is an array containing all edits.
+    const changes = event.changes;
+
+    changes.forEach((change) => {
+      console.log('Text inserted/replaced:', change.text);
+      console.log('Range of the edit:', change.range); // { start: { line, character }, end: { line, character } }
+      console.log('Offset of the change:', change.start, change.end);
+    });
+  },
+});`,
   },
   options,
 };
