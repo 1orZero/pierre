@@ -1258,6 +1258,7 @@ export class VirtualizedFileDiff<
     } else {
       this.top ??= this.getVirtualizedTop();
       if (targetChanged) {
+        this.getSimpleVirtualizer()?.markDOMDirty();
         this.computeApproximateSize(false, nextFileDiff);
       }
     }
@@ -1320,7 +1321,7 @@ export class VirtualizedFileDiff<
     return this.virtualizer.type === 'advanced';
   }
 
-  private getVirtualizedTop(): number | undefined {
+  private getVirtualizedTop(): number {
     if (this.virtualizer.type === 'advanced') {
       return this.virtualizer.getLocalTopForInstance(this);
     }

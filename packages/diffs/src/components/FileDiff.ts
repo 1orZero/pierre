@@ -36,6 +36,7 @@ import {
 import { SVGSpriteSheet } from '../sprite';
 import type {
   AppliedThemeStyleCache,
+  BaseCodeOptions,
   BaseDiffOptions,
   CustomPreProperties,
   DiffLineAnnotation,
@@ -628,6 +629,10 @@ export class FileDiff<
     }
   }
 
+  public __getEffectiveCodeOptions(): BaseCodeOptions {
+    return { ...this.options, ...this.hunksRenderer.getEffectiveCodeOptions() };
+  }
+
   public cleanUp(recycle: boolean = false): void {
     dequeueRender(this.handleEditSessionRender);
     this.emitPostRender(true);
@@ -1055,8 +1060,17 @@ export class FileDiff<
 
     const { renderRange: previousRenderRange } = this;
     this.renderRange = nextRenderRange;
-    this.deletionFile = oldFile;
-    this.additionFile = newFile;
+    // Store files only when this render actually carried a file input:
+    // internal rerenders pass none, and wiping the pair here would defeat the
+    // oldFile/newFile early-return on every later host render. An explicit
+    // fileDiff input supersedes a previously parsed pair, so clear it then.
+    if (hasFileInput) {
+      this.deletionFile = oldFile;
+      this.additionFile = newFile;
+    } else if (fileDiff != null) {
+      this.deletionFile = undefined;
+      this.additionFile = undefined;
+    }
 
     if (fileDiff != null) {
       this.fileDiff = fileDiff;
@@ -2391,11 +2405,13 @@ export class FileDiff<
       diffStyle,
     });
     if (trimResult < 0) {
-      throw new Error('applyPartialRender: failed to trim to overlap');
+      throw new Error('FileDiff.applyPartialRender: failed to trim to overlap');
     }
 
     if (this.lastRowCount < trimResult) {
-      throw new Error('applyPartialRender: trimmed beyond DOM row count');
+      throw new Error(
+        'FileDiff.applyPartialRender: trimmed beyond DOM row count'
+      );
     }
 
     let rowCount = this.lastRowCount - trimResult;
