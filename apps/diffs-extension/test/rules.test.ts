@@ -4,11 +4,11 @@ import { buildDynamicRules, RULE_IDS } from '../src/lib/rules';
 
 describe('buildDynamicRules', () => {
   test('returns no redirect rules when disabled', () => {
-    expect(buildDynamicRules({ enabled: false, target: 'prod' })).toEqual([]);
+    expect(buildDynamicRules({ enabled: false })).toEqual([]);
   });
 
   test('builds redirect rules for enabled prod config', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const rules = buildDynamicRules({ enabled: true });
 
     expect(rules.map((rule) => rule.id)).toEqual(RULE_IDS);
     expect(
@@ -18,18 +18,8 @@ describe('buildDynamicRules', () => {
     ).toBe(true);
   });
 
-  test('builds redirect rules for local dev config', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'local' });
-
-    expect(
-      rules.some((rule) =>
-        JSON.stringify(rule.action).includes('http://localhost:3692')
-      )
-    ).toBe(true);
-  });
-
   test('keeps Chrome regex filters below common memory-limit pitfalls', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const rules = buildDynamicRules({ enabled: true });
     const filters = rules
       .map((rule) => rule.condition.regexFilter)
       .filter((filter): filter is string => typeof filter === 'string');
@@ -39,7 +29,7 @@ describe('buildDynamicRules', () => {
   });
 
   test('does not match commit-like paths shorter than a GitHub short SHA', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const rules = buildDynamicRules({ enabled: true });
     const filters = rules
       .map((rule) => rule.condition.regexFilter)
       .filter((filter): filter is string => typeof filter === 'string');
@@ -52,7 +42,7 @@ describe('buildDynamicRules', () => {
   });
 
   test('matches full GitHub SHA commit-like paths', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const rules = buildDynamicRules({ enabled: true });
     const filters = rules
       .map((rule) => rule.condition.regexFilter)
       .filter((filter): filter is string => typeof filter === 'string');
@@ -67,7 +57,7 @@ describe('buildDynamicRules', () => {
   });
 
   test('does not match commit-like paths longer than a GitHub full SHA', () => {
-    const rules = buildDynamicRules({ enabled: true, target: 'prod' });
+    const rules = buildDynamicRules({ enabled: true });
     const filters = rules
       .map((rule) => rule.condition.regexFilter)
       .filter((filter): filter is string => typeof filter === 'string');

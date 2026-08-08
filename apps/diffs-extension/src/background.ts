@@ -1,13 +1,14 @@
-import {
-  type ExtensionTarget,
-  STORAGE_KEYS,
-  TARGET_ORIGINS,
-} from './lib/config';
-import { fetchGitHubDiff, fetchGitHubPullTitle } from './lib/diff-service';
+import { DIFFSHUB_ORIGIN, STORAGE_KEYS } from './lib/config';
+import { fetchGitHubDiff, isGitHubDiffForPath } from './lib/diff-service';
 import { buildDynamicRules, RULE_IDS } from './lib/rules';
 import { getExtensionStorage, toggleEnabled } from './lib/storage';
 
 const extensionStorage = getExtensionStorage();
+const LEGACY_PAT_STORAGE_KEYS = [
+  'diffs-extension.githubPat',
+  'diffs-extension.githubPat.local',
+  'diffs-extension.githubPat.prod',
+] as const;
 
 async function syncRules(): Promise<void> {
   const config = await extensionStorage.getConfig();
@@ -25,20 +26,26 @@ async function updateBadge(enabled: boolean): Promise<void> {
   }
 }
 
-function getSenderTarget(
-  sender: chrome.runtime.MessageSender
-): ExtensionTarget {
+function isAllowedRequest(
+  sender: chrome.runtime.MessageSender,
+  sourceUrl: string
+): boolean {
   try {
-    return new URL(sender.url ?? '').origin === TARGET_ORIGINS.local
-      ? 'local'
-      : 'prod';
+    const senderUrl = new URL(sender.url ?? '');
+    return (
+      senderUrl.origin === DIFFSHUB_ORIGIN &&
+      isGitHubDiffForPath(sourceUrl, senderUrl.pathname)
+    );
   } catch {
-    return 'prod';
+    return false;
   }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   void syncRules();
+  for (const key of LEGACY_PAT_STORAGE_KEYS) {
+    void chrome.storage.local.remove(key);
+  }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -53,41 +60,27 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const sourceUrl = (message as { sourceUrl?: unknown } | null)?.sourceUrl;
   if (
     message == null ||
     typeof message !== 'object' ||
     (message as { type?: unknown }).type !== 'fetchDiff' ||
-    typeof (message as { sourceUrl?: unknown }).sourceUrl !== 'string'
+    typeof sourceUrl !== 'string' ||
+    !isAllowedRequest(sender, sourceUrl)
   ) {
     return undefined;
   }
 
   void (async () => {
-    const target = getSenderTarget(sender);
-    const token = await extensionStorage.getToken(target);
-    console.info(
-      '[Diffs Extension] fetchDiff request',
-      JSON.stringify({
-        hasToken: token.trim() !== '',
-        senderUrl: sender.url,
-        sourceUrl: (message as { sourceUrl: string }).sourceUrl,
-        target,
-      })
-    );
-    const options = {
+    const result = await fetchGitHubDiff({
       fetch: fetch.bind(globalThis),
-      sourceUrl: (message as { sourceUrl: string }).sourceUrl,
-      token,
-    };
-    const [result, title] = await Promise.all([
-      fetchGitHubDiff(options),
-      fetchGitHubPullTitle(options),
-    ]);
+      sourceUrl,
+    });
     console.info(
       '[Diffs Extension] fetchDiff result',
-      JSON.stringify({ ok: result.ok, status: result.status, target })
+      JSON.stringify({ status: result.status })
     );
-    sendResponse(title == null ? result : { ...result, title });
+    sendResponse(result);
   })();
   return true;
 });

@@ -51,21 +51,21 @@ export function HomePage() {
           DiffsHub
         </h2>
         <p className="text-muted-foreground text-pretty">
-          View code changes from any public GitHub diff—PRs, comparisons,
-          commits, diffs, and patches—with a super-freaking-fast, beautiful, and
-          virtualized interface by replacing <code>github.com</code> with{' '}
-          <code>diffs.veraze.io</code>.
+          View GitHub PRs, comparisons, and commits using your signed-in GitHub
+          session. Diffs Extension fetches the diff directly from{' '}
+          <code>github.com</code>; DiffsHub never receives your GitHub
+          credentials.
         </p>
         <div className="text-muted-foreground flex flex-col gap-[2px] font-mono leading-[22px] tracking-tight">
           <code className="diffshub-border-deleted rounded-l font-normal text-inherit">
             <span className="min-w-0 truncate">
-              <code className={DIFF_LINE_DELETED_BADGE}>- github</code>
-              .com/org/repo/pull/number
+              <code className={DIFF_LINE_DELETED_BADGE}>GitHub</code>
+              .com/org/repo/pull/number.diff
             </span>
           </code>
           <code className="truncate rounded-l border-l-[4px] border-[#07c480] font-normal text-inherit">
-            <code className={DIFF_LINE_ADDED_BADGE}>+ diffs</code>
-            .veraze.io/org/repo/pull/number
+            <code className={DIFF_LINE_ADDED_BADGE}>Extension</code> uses your
+            GitHub login cookie, without a PAT
           </code>
         </div>
         <HomeFetchForm />
@@ -91,17 +91,6 @@ export function HomePage() {
               </li>
             ))}
           </ul>
-          <p className="text-muted-foreground hidden text-sm md:block">
-            You can also compare millions of lines with ease, like{' '}
-            <Link
-              href="/torvalds/linux/compare/v6.0...v7.0"
-              className="inline-link"
-            >
-              v6...v7 of Linux
-            </Link>
-            . This sometimes crashes mobile browsers, and GitHub unreliably
-            serves diffs over 100k lines with a delayed first byte.
-          </p>
         </div>
       </section>
       <section

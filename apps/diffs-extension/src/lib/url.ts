@@ -1,4 +1,4 @@
-import { type ExtensionTarget, SKIP_PARAM, TARGET_ORIGINS } from './config';
+import { DIFFSHUB_ORIGIN, SKIP_PARAM } from './config';
 
 const GITHUB_HOST = 'github.com';
 const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
@@ -12,12 +12,6 @@ const COMMIT_PATTERN =
   /^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]{7,40})(?:\.(?:diff|patch))?$/i;
 const COMPARE_PATTERN =
   /^\/([^/]+)\/([^/]+)\/compare\/(.+?)(?:\.(?:diff|patch))?$/;
-const TARGET_ORIGIN_SET = new Set<string>(Object.values(TARGET_ORIGINS));
-
-export function getTargetOrigin(target: ExtensionTarget): string {
-  return TARGET_ORIGINS[target];
-}
-
 export function getDiffshubPath(input: string): string | null {
   let url: URL;
   try {
@@ -39,12 +33,9 @@ export function getDiffshubPath(input: string): string | null {
   return normalizeGitHubPath(url.pathname);
 }
 
-export function getDiffshubUrl(
-  input: string,
-  options: { targetOrigin: string }
-): string | null {
+export function getDiffshubUrl(input: string): string | null {
   const path = getDiffshubPath(input);
-  return path == null ? null : `${options.targetOrigin}${path}`;
+  return path == null ? null : `${DIFFSHUB_ORIGIN}${path}`;
 }
 
 export function getGitHubUrlFromDiffshub(
@@ -58,7 +49,7 @@ export function getGitHubUrlFromDiffshub(
     return null;
   }
 
-  if (!TARGET_ORIGIN_SET.has(url.origin) || url.searchParams.has('domain')) {
+  if (url.origin !== DIFFSHUB_ORIGIN) {
     return null;
   }
 
@@ -70,27 +61,6 @@ export function getGitHubUrlFromDiffshub(
     githubUrl.searchParams.set(SKIP_PARAM, '1');
   }
   return githubUrl.href;
-}
-
-export function getDiffshubUrlFromDiffshub(
-  input: string,
-  options: { targetOrigin: string }
-): string | null {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return null;
-  }
-
-  if (!TARGET_ORIGIN_SET.has(url.origin) || url.searchParams.has('domain')) {
-    return null;
-  }
-
-  const path = normalizeGitHubPath(url.pathname);
-  if (path == null) return null;
-
-  return `${options.targetOrigin}${path}${url.search}${url.hash}`;
 }
 
 export function normalizeGitHubPath(path: string): string | null {

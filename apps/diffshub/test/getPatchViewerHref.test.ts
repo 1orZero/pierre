@@ -147,5 +147,14 @@ describe('getPatchViewerHref', () => {
     test('root URL only', () => {
       expect(getPatchViewerHref('https://github.com')).toBeUndefined();
     });
+
+    test('non-GitHub URL', () => {
+      expect(
+        getPatchViewerHref('https://tangled.org/owner/repo/pull/123')
+      ).toBeUndefined();
+      expect(
+        getPatchViewerHref('gitlab.com/owner/repo/pull/123')
+      ).toBeUndefined();
+    });
   });
 });

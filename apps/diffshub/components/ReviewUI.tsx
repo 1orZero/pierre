@@ -30,7 +30,6 @@ import {
 } from '@/components/themeController';
 import { preloadAvatars } from '@/lib/annotation';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
-import { SITE_NAME } from '@/lib/site';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import type {
   CommentMetadata,
@@ -41,24 +40,21 @@ import type {
 import { upsertSavedCommentSidebarEntry } from '@/lib/upsertSavedCommentSidebarEntry';
 
 interface ReviewUIProps {
-  domain?: string;
   initialUrl: string;
   path: string;
 }
 
-const DEFAULT_DOCUMENT_TITLE = `${SITE_NAME}, from Pierre`;
-
-export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
+export function ReviewUI({ initialUrl, path }: ReviewUIProps) {
   // Provide the diffshub-scoped theme context, then render the body BELOW it so
   // the diffs hook + selection hook can read the controller context.
   return (
     <ThemeSourceProvider controller={themeController}>
-      <ReviewUIInner domain={domain} initialUrl={initialUrl} path={path} />
+      <ReviewUIInner initialUrl={initialUrl} path={path} />
     </ThemeSourceProvider>
   );
 }
 
-function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
+function ReviewUIInner({ initialUrl, path }: ReviewUIProps) {
   useEffect(preloadAvatars, []);
 
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
@@ -174,31 +170,16 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     loadState,
     onLineLinkChange,
     onViewerReady,
-    pullRequestTitle,
     retryLoad,
     setCommentSections,
     treeSource,
     viewerKey,
   } = usePatchLoader({
     collapseMode,
-    domain,
     onLoadStart: handlePatchLoadStart,
     path,
     viewerRef,
   });
-
-  useEffect(() => {
-    if (pullRequestTitle == null) return;
-
-    const defaultTitle = document.title;
-    const prefix = defaultTitle.endsWith(DEFAULT_DOCUMENT_TITLE)
-      ? defaultTitle.slice(0, -DEFAULT_DOCUMENT_TITLE.length)
-      : '';
-    document.title = `${prefix}${pullRequestTitle}`;
-    return () => {
-      document.title = defaultTitle;
-    };
-  }, [pullRequestTitle]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');

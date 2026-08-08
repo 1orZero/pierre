@@ -1,5 +1,5 @@
 import { type ExtensionConfig } from './config';
-import { getDiffshubUrl, getTargetOrigin } from './url';
+import { getDiffshubUrl } from './url';
 
 export interface GitHubRedirectDecision {
   config: ExtensionConfig;
@@ -15,7 +15,5 @@ export function decideGitHubRedirect(
   if (decision.escapeActive) return null;
   if (decision.viaHistory) return null;
 
-  return getDiffshubUrl(decision.href, {
-    targetOrigin: getTargetOrigin(decision.config.target),
-  });
+  return getDiffshubUrl(decision.href);
 }

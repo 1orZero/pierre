@@ -1,5 +1,4 @@
-import { type ExtensionConfig, SKIP_PARAM } from './config';
-import { getTargetOrigin } from './url';
+import { DIFFSHUB_ORIGIN, type ExtensionConfig, SKIP_PARAM } from './config';
 
 const RULE_ALLOW_SKIP = 1;
 const RULE_PR_COMMIT_REDIRECT = 2;
@@ -24,7 +23,6 @@ export function buildDynamicRules(
 ): chrome.declarativeNetRequest.Rule[] {
   if (!config.enabled) return [];
 
-  const origin = getTargetOrigin(config.target);
   return [
     {
       id: RULE_ALLOW_SKIP,
@@ -41,7 +39,7 @@ export function buildDynamicRules(
       action: {
         type: 'redirect',
         redirect: {
-          regexSubstitution: `${origin}/\\1/commit/\\2`,
+          regexSubstitution: `${DIFFSHUB_ORIGIN}/\\1/commit/\\2`,
         },
       },
       condition: {
@@ -55,7 +53,7 @@ export function buildDynamicRules(
       action: {
         type: 'redirect',
         redirect: {
-          regexSubstitution: `${origin}/\\1/pull/\\2`,
+          regexSubstitution: `${DIFFSHUB_ORIGIN}/\\1/pull/\\2`,
         },
       },
       condition: {
@@ -70,7 +68,7 @@ export function buildDynamicRules(
       action: {
         type: 'redirect',
         redirect: {
-          regexSubstitution: `${origin}/\\1/commit/\\2`,
+          regexSubstitution: `${DIFFSHUB_ORIGIN}/\\1/commit/\\2`,
         },
       },
       condition: {
@@ -84,7 +82,7 @@ export function buildDynamicRules(
       action: {
         type: 'redirect',
         redirect: {
-          regexSubstitution: `${origin}/\\1/compare/\\2`,
+          regexSubstitution: `${DIFFSHUB_ORIGIN}/\\1/compare/\\2`,
         },
       },
       condition: {
@@ -99,7 +97,7 @@ export function buildDynamicRules(
       action: {
         type: 'redirect',
         redirect: {
-          regexSubstitution: `${origin}/\\1/compare/\\2`,
+          regexSubstitution: `${DIFFSHUB_ORIGIN}/\\1/compare/\\2`,
         },
       },
       condition: {

@@ -19,68 +19,21 @@ class MemoryStorageArea {
     }
     return Promise.resolve();
   }
-
-  remove(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
-}
-
-function createMemoryStorage() {
-  const local = new MemoryStorageArea();
-  const sync = new MemoryStorageArea();
-  return {
-    local,
-    storage: createExtensionStorage({ local, sync }),
-    sync,
-  };
 }
 
 describe('extension storage', () => {
-  test('defaults to enabled prod config', async () => {
-    const { storage } = createMemoryStorage();
+  test('defaults to enabled config', async () => {
+    const storage = createExtensionStorage(new MemoryStorageArea());
 
-    const config = await storage.getConfig();
-
-    expect(config).toEqual(DEFAULT_CONFIG);
-  });
-
-  test('stores separate PATs in local storage only', async () => {
-    const { local, storage, sync } = createMemoryStorage();
-
-    await storage.setToken('prod', '  github_pat_prod  ');
-    await storage.setToken('local', '  github_pat_local  ');
-
-    const prodToken = await storage.getToken('prod');
-    const localToken = await storage.getToken('local');
-
-    expect(prodToken).toBe('github_pat_prod');
-    expect(localToken).toBe('github_pat_local');
-    expect(local.values.has('diffs-extension.githubPat.prod')).toBe(true);
-    expect(local.values.has('diffs-extension.githubPat.local')).toBe(true);
-    expect(sync.values.has('diffs-extension.githubPat.prod')).toBe(false);
-    expect(sync.values.has('diffs-extension.githubPat.local')).toBe(false);
-  });
-
-  test('clears the legacy PAT when clearing production PAT', async () => {
-    const { local, storage } = createMemoryStorage();
-    local.values.set('diffs-extension.githubPat', 'github_pat_legacy');
-
-    await storage.clearToken('prod');
-
-    expect(await storage.getToken('prod')).toBe('');
+    expect(await storage.getConfig()).toEqual(DEFAULT_CONFIG);
   });
 
   test('toggles enabled config', async () => {
-    const { storage } = createMemoryStorage();
+    const storage = createExtensionStorage(new MemoryStorageArea());
 
-    const disabledConfig = await toggleEnabled(storage);
-    const enabledConfig = await toggleEnabled(storage);
-
-    expect(disabledConfig).toEqual({
+    expect(await toggleEnabled(storage)).toEqual({
       enabled: false,
-      target: 'prod',
     });
-    expect(enabledConfig).toEqual(DEFAULT_CONFIG);
+    expect(await toggleEnabled(storage)).toEqual(DEFAULT_CONFIG);
   });
 });

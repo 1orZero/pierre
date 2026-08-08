@@ -17,7 +17,7 @@ import {
   useState,
 } from 'react';
 
-import { githubFetch } from './githubViewer';
+import { fetchGitHubDiffThroughExtension } from './extensionDiffBridge';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from '@/lib/constants';
 import {
   appendFileDiffToDiffsHubData,
@@ -33,11 +33,6 @@ import {
   formatDiffsHubLineHash,
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
-import { getPatchLoadErrorMessage } from '@/lib/patchLoadErrorMessage';
-import {
-  decodePullRequestTitle,
-  PULL_REQUEST_TITLE_HEADER,
-} from '@/lib/pullRequestTitleHeader';
 import {
   getStreamedPatchMetadata,
   streamGitPatchFiles,
@@ -56,10 +51,11 @@ const STREAM_INITIAL_PUBLISH_INTERVAL_MS = 500;
 const STREAM_WORK_BUDGET_MS = 8;
 const STREAM_TREE_PUBLISH_FILE_BATCH_SIZE = 1_000;
 const STREAM_TREE_PUBLISH_INTERVAL_MS = 1_000;
+const GENERIC_PATCH_LOAD_ERROR_MESSAGE =
+  'We couldn’t load that diff. Check the URL and try again.';
 
 interface UsePatchLoaderOptions {
   collapseMode: 'expanded' | 'collapsed';
-  domain?: string;
   onLoadStart(): void;
   path: string;
   viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
@@ -75,7 +71,6 @@ interface UsePatchLoaderResult {
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
-  pullRequestTitle: string | null;
   retryLoad(): void;
   setCommentSections: Dispatch<SetStateAction<DiffsHubSavedCommentItem[]>>;
   treeSource: DiffsHubFileTreeSource | null;
@@ -84,7 +79,6 @@ interface UsePatchLoaderResult {
 
 export function usePatchLoader({
   collapseMode,
-  domain,
   onLoadStart,
   path,
   viewerRef,
@@ -106,7 +100,6 @@ export function usePatchLoader({
   >([]);
   const [loadState, setLoadState] = useState<ViewerLoadState>('fetching');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [pullRequestTitle, setPullRequestTitle] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
   const requestIdRef = useRef(0);
@@ -218,12 +211,7 @@ export function usePatchLoader({
   );
 
   useEffect(() => {
-    const patchRequestKey =
-      domain == null || domain === '' ? path : `${domain}${path}`;
-    const patchSearchParams = new URLSearchParams({ path });
-    if (domain != null && domain !== '') {
-      patchSearchParams.set('domain', domain);
-    }
+    const patchRequestKey = path;
 
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
@@ -239,7 +227,6 @@ export function usePatchLoader({
     setDiffStats(null);
     setCommentFileByItemId(null);
     setCommentSections([]);
-    setPullRequestTitle(null);
     onLoadStart();
     setErrorMessage(null);
     setLoadState('fetching');
@@ -276,27 +263,18 @@ export function usePatchLoader({
         }
 
         console.time('--     request time');
-        const response = await githubFetch(`/api/diff?${patchSearchParams}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
+        const response = await fetchGitHubDiffThroughExtension(
+          `https://github.com${path}`,
+          controller.signal
+        );
         console.timeEnd('--     request time');
 
-        // This only catches route setup errors. GitHub fetch failures are
-        // delivered while consuming the stream so the UI can enter the
-        // streaming state as soon as the local transport opens.
         if (!response.ok) {
           const detail = (await response.text()).trim();
           throw new Error(
             detail.length > 0 ? detail : `Request failed (${response.status}).`
           );
         }
-        setPullRequestTitle(
-          decodePullRequestTitle(
-            response.headers.get(PULL_REQUEST_TITLE_HEADER)
-          )
-        );
-
         if (response.body == null) {
           console.time('--     reading patch');
           const patchContent = await response.text();
@@ -488,7 +466,11 @@ export function usePatchLoader({
           return;
         }
         console.warn('Failed to load diff', error);
-        setErrorMessage(getPatchLoadErrorMessage(error));
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : GENERIC_PATCH_LOAD_ERROR_MESSAGE
+        );
         setLoadState('error');
       }
     }
@@ -498,14 +480,7 @@ export function usePatchLoader({
     return () => {
       controller.abort();
     };
-  }, [
-    domain,
-    loadAttempt,
-    onLoadStart,
-    path,
-    tryApplyLineHashTarget,
-    viewerRef,
-  ]);
+  }, [loadAttempt, onLoadStart, path, tryApplyLineHashTarget, viewerRef]);
 
   useEffect(() => {
     window.addEventListener('hashchange', tryApplyLineHashTarget);
@@ -529,7 +504,6 @@ export function usePatchLoader({
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,
-    pullRequestTitle,
     retryLoad,
     setCommentSections,
     treeSource,

@@ -1,4 +1,4 @@
-export const BRIDGE_TAG = 'diffs-extension';
+export const BRIDGE_TAG = 'diffs-extension-v2';
 
 export interface FetchDiffRequest {
   id: string;
@@ -10,10 +10,8 @@ export interface FetchDiffRequest {
 export interface FetchDiffResponse {
   body: string;
   id: string;
-  ok: boolean;
   status: number;
   tag: typeof BRIDGE_TAG;
-  title?: string;
   type: 'fetchDiffResult';
 }
 
@@ -23,17 +21,8 @@ export interface FetchDiffStarted {
   type: 'fetchDiffStarted';
 }
 
-export interface FetchDiffUnavailable {
-  id: string;
-  tag: typeof BRIDGE_TAG;
-  type: 'fetchDiffUnavailable';
-}
-
 export type PageToContentMessage = FetchDiffRequest;
-export type ContentToPageMessage =
-  | FetchDiffResponse
-  | FetchDiffStarted
-  | FetchDiffUnavailable;
+export type ContentToPageMessage = FetchDiffResponse | FetchDiffStarted;
 
 export function isFetchDiffRequest(value: unknown): value is FetchDiffRequest {
   if (value == null || typeof value !== 'object') return false;
@@ -56,9 +45,7 @@ export function isFetchDiffResponse(
     message.type === 'fetchDiffResult' &&
     typeof message.id === 'string' &&
     typeof message.body === 'string' &&
-    typeof message.ok === 'boolean' &&
-    typeof message.status === 'number' &&
-    (message.title == null || typeof message.title === 'string')
+    typeof message.status === 'number'
   );
 }
 
@@ -68,18 +55,6 @@ export function isFetchDiffStarted(value: unknown): value is FetchDiffStarted {
   return (
     message.tag === BRIDGE_TAG &&
     message.type === 'fetchDiffStarted' &&
-    typeof message.id === 'string'
-  );
-}
-
-export function isFetchDiffUnavailable(
-  value: unknown
-): value is FetchDiffUnavailable {
-  if (value == null || typeof value !== 'object') return false;
-  const message = value as Partial<FetchDiffUnavailable>;
-  return (
-    message.tag === BRIDGE_TAG &&
-    message.type === 'fetchDiffUnavailable' &&
     typeof message.id === 'string'
   );
 }

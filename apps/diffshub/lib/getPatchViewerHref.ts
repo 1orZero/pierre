@@ -9,9 +9,9 @@ const GITHUB_SHORTHAND_PATTERN = /^([^/\s]+)\/([^/\s#]+)#(\d+)$/;
 const BARE_GITHUB_PATH_PATTERN = /^([^/\s.]+)\/([^/\s.]+)(\/[^\s]*)?$/;
 
 // Resolves a user-supplied string into a viewer href, or undefined if the
-// input can't be mapped to a supported diff URL. Accepts full URLs, URLs
-// without a protocol (e.g. "github.com/..."), bare "owner/repo/..." paths, and
-// GitHub shorthand ("owner/repo#123").
+// input can't be mapped to a supported GitHub diff URL. Accepts full URLs,
+// URLs without a protocol (e.g. "github.com/..."), bare
+// "owner/repo/..." paths, and GitHub shorthand ("owner/repo#123").
 export function getPatchViewerHref(input: string): string | undefined {
   const trimmed = input.trim();
   if (trimmed === '') return undefined;
@@ -27,9 +27,6 @@ export function getPatchViewerHref(input: string): string | undefined {
     const parsedURL = new URL(trimmed);
     const githubPath = getGitHubPathFromURL(parsedURL);
     if (githubPath != null) return githubPath;
-    if (parsedURL.pathname !== '/') {
-      return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;
-    }
     return undefined;
   } catch {
     // Not a fully-qualified URL; try other interpretations.
@@ -45,9 +42,6 @@ export function getPatchViewerHref(input: string): string | undefined {
       const parsedURL = new URL(`https://${trimmed}`);
       const githubPath = getGitHubPathFromURL(parsedURL);
       if (githubPath != null) return githubPath;
-      if (parsedURL.pathname !== '/') {
-        return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;
-      }
     } catch {
       // Not parseable even with https:// prefix.
     }

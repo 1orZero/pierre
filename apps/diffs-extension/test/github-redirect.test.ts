@@ -6,7 +6,7 @@ describe('decideGitHubRedirect', () => {
   test('redirects GitHub PR changes tabs to the configured target', () => {
     expect(
       decideGitHubRedirect({
-        config: { enabled: true, target: 'prod' },
+        config: { enabled: true },
         escapeActive: false,
         href: 'https://github.com/exploratortech/chat-everywhere-v2/pull/882/changes',
         viaHistory: false,
@@ -19,7 +19,7 @@ describe('decideGitHubRedirect', () => {
   test('does not redirect when the extension is disabled', () => {
     expect(
       decideGitHubRedirect({
-        config: { enabled: false, target: 'prod' },
+        config: { enabled: false },
         escapeActive: false,
         href: 'https://github.com/exploratortech/chat-everywhere-v2/pull/882/changes',
         viaHistory: false,
@@ -30,7 +30,7 @@ describe('decideGitHubRedirect', () => {
   test('does not redirect when the tab has escaped back to GitHub', () => {
     expect(
       decideGitHubRedirect({
-        config: { enabled: true, target: 'prod' },
+        config: { enabled: true },
         escapeActive: true,
         href: 'https://github.com/exploratortech/chat-everywhere-v2/pull/882/changes',
         viaHistory: false,
@@ -41,7 +41,7 @@ describe('decideGitHubRedirect', () => {
   test('does not redirect browser history navigation', () => {
     expect(
       decideGitHubRedirect({
-        config: { enabled: true, target: 'prod' },
+        config: { enabled: true },
         escapeActive: false,
         href: 'https://github.com/exploratortech/chat-everywhere-v2/pull/882/changes',
         viaHistory: true,

@@ -20,6 +20,8 @@ const berkeleyMono = localFont({
 
 const themeBootstrapScript = `(${String(function applyInitialTheme() {
   try {
+    // Versions before the extension-only flow stored a GitHub PAT here.
+    window.localStorage.removeItem('diffshub.githubPat');
     const storedTheme = window.localStorage.getItem('theme');
     const theme =
       storedTheme === 'light' || storedTheme === 'dark'
