@@ -27,12 +27,14 @@
     "tw-animate-css": "catalog:"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "catalog:",
     "@tailwindcss/postcss": "catalog:",
     "@types/jsdom": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "jsdom": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
   }
 }

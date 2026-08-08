@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { loadWorktreeEnv } from '../../scripts/load-worktree-env.mjs';
 
 // `next dev` runs under Node, which (like Bun) only auto-loads the standard
@@ -6,6 +8,8 @@ import { loadWorktreeEnv } from '../../scripts/load-worktree-env.mjs';
 // those in manually before Next inspects `process.env`. moon tasks load the
 // same file via their envFile option; the loader preserves existing values.
 loadWorktreeEnv();
+
+const repoRoot = path.resolve(import.meta.dirname, '../..');
 
 // The browser title prefix (see `app/layout.tsx`) reads
 // `NEXT_PUBLIC_WORKTREE_SLUG` so the value survives into the client bundle.
@@ -20,6 +24,11 @@ if (
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: repoRoot,
+  turbopack: {
+    root: repoRoot,
+  },
   // Strict mode is disabled here to avoid GitHub request thrash in dev: the
   // viewer fires upstream patch fetches on mount, and double-invoked effects
   // would double those requests.

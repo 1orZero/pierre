@@ -23,6 +23,21 @@ tasks:
       - '.next/**/*'
       - '!.next/cache/**'
 
+  build-cloudflare:
+    command: 'opennextjs-cloudflare build --skipNextBuild'
+    deps:
+      - 'build'
+    outputs:
+      - '.open-next/**/*'
+
+  deploy-cloudflare:
+    command: 'opennextjs-cloudflare deploy'
+    deps:
+      - 'build-cloudflare'
+    options:
+      cache: false
+      runInCI: 'skip'
+
   # Build deps run to completion first, then dependency watchers (`^:dev`)
   # run alongside next dev. run-dev.sh kills stale listeners on the port
   # before starting (crashed terminals leak servers).

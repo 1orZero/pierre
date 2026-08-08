@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 .next
+.open-next
 dist-ssr
 *.local
 tsconfig.tsbuildinfo
@@ -29,6 +30,7 @@ tsconfig.tsbuildinfo
 *.sln
 *.sw?
 .vercel
+.wrangler
 .claude/*
 .codemogger/*
 .omx/
