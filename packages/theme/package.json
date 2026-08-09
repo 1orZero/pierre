@@ -1,7 +1,7 @@
 {
   "name": "@pierre/theme",
   "displayName": "Pierre Theme",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Pierre theme for Shiki, VS Code, and more",
   "categories": [
     "Themes"
@@ -16,7 +16,7 @@
   "bugs": {
     "url": "https://github.com/pierrecomputer/pierre/issues"
   },
-  "license": "MIT",
+  "license": "apache-2.0",
   "author": "Pierre Computer <support@pierre.co>",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     "themes",
     "icon.png",
     "LICENSE",
+    "NOTICE.md",
     "README.md"
   ],
   "sideEffects": false,

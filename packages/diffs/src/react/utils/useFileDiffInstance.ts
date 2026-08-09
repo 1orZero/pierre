@@ -8,6 +8,7 @@ import {
 
 import { FileDiff, type FileDiffOptions } from '../../components/FileDiff';
 import { VirtualizedFileDiff } from '../../components/VirtualizedFileDiff';
+import type { EditorOptions } from '../../edit';
 import type { GetHoveredLineResult } from '../../managers/InteractionManager';
 import type {
   DiffLineAnnotation,
@@ -17,16 +18,18 @@ import type {
 } from '../../types';
 import { areOptionsEqual } from '../../utils/areOptionsEqual';
 import { noopRender } from '../constants';
+import { useCreateEditor } from '../EditContext';
 import { useVirtualizer } from '../Virtualizer';
 import { WorkerPoolContext } from '../WorkerPoolContext';
 import { useStableCallback } from './useStableCallback';
 
-const useIsometricEffect =
+const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 interface UseFileDiffInstanceProps<LAnnotation> {
   fileDiff: FileDiffMetadata;
   options: FileDiffOptions<LAnnotation> | undefined;
+  editorOptions: EditorOptions<LAnnotation> | undefined;
   lineAnnotations: DiffLineAnnotation<LAnnotation>[] | undefined;
   selectedLines: SelectedLineRange | null | undefined;
   prerenderedHTML: string | undefined;
@@ -34,6 +37,7 @@ interface UseFileDiffInstanceProps<LAnnotation> {
   hasGutterRenderUtility: boolean;
   hasCustomHeader: boolean;
   disableWorkerPool: boolean;
+  edit: boolean;
 }
 
 interface UseFileDiffInstanceReturn {
@@ -44,6 +48,7 @@ interface UseFileDiffInstanceReturn {
 export function useFileDiffInstance<LAnnotation>({
   fileDiff,
   options,
+  editorOptions,
   lineAnnotations,
   selectedLines,
   prerenderedHTML,
@@ -51,10 +56,12 @@ export function useFileDiffInstance<LAnnotation>({
   hasGutterRenderUtility,
   hasCustomHeader,
   disableWorkerPool,
+  edit,
 }: UseFileDiffInstanceProps<LAnnotation>): UseFileDiffInstanceReturn {
   const simpleVirtualizer = useVirtualizer();
   const controlledSelection = selectedLines !== undefined;
   const poolManager = useContext(WorkerPoolContext);
+  const createEditor = useCreateEditor<LAnnotation>();
   const instanceRef = useRef<
     FileDiff<LAnnotation> | VirtualizedFileDiff<LAnnotation> | null
   >(null);
@@ -107,7 +114,7 @@ export function useFileDiffInstance<LAnnotation>({
     }
   });
 
-  useIsometricEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const { current: instance } = instanceRef;
     if (instance == null) return;
     const newOptions = mergeFileDiffOptions({
@@ -116,7 +123,12 @@ export function useFileDiffInstance<LAnnotation>({
       hasGutterRenderUtility,
       options,
     });
-    const forceRender = !areOptionsEqual(instance.options, newOptions);
+    // setOptions(undefined) is a no-op, so an undefined merge result never
+    // requires a forced render — comparing it against the instance's
+    // constructor-default options would force a full render on every commit.
+    const forceRender =
+      newOptions !== undefined &&
+      !areOptionsEqual(instance.options, newOptions);
     instance.setOptions(newOptions);
     void instance.render({
       forceRender,
@@ -128,13 +140,37 @@ export function useFileDiffInstance<LAnnotation>({
     }
   });
 
+  useIsomorphicLayoutEffect(() => {
+    if (edit && instanceRef.current != null) {
+      if (createEditor === undefined) {
+        throw new Error('FileDiff: EditContext is not attached');
+      }
+      const editor = createEditor(editorOptions ?? {});
+      if (editor == null) {
+        throw new Error(
+          'FileDiff: EditProvider.createEditor must return an editor instance'
+        );
+      }
+      try {
+        return editor.edit(instanceRef.current);
+      } catch (error) {
+        editor.cleanUp();
+        throw error;
+      }
+    }
+    return undefined;
+  }, [edit]);
+
   const getHoveredLine = useCallback(():
     | GetHoveredLineResult<'diff'>
     | undefined => {
     return instanceRef.current?.getHoveredLine();
   }, []);
 
-  return { ref, getHoveredLine };
+  return {
+    ref,
+    getHoveredLine,
+  };
 }
 
 interface MergeFileDiffOptionsProps<LAnnotation> {
@@ -152,9 +188,13 @@ function mergeFileDiffOptions<LAnnotation>({
 }: MergeFileDiffOptionsProps<LAnnotation>):
   | FileDiffOptions<LAnnotation>
   | undefined {
-  if (!controlledSelection && !hasGutterRenderUtility && !hasCustomHeader) {
+  const needsReactOverrides =
+    controlledSelection || hasGutterRenderUtility || hasCustomHeader;
+
+  if (!needsReactOverrides) {
     return options;
   }
+
   return {
     ...options,
     controlledSelection,

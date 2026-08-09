@@ -1,8 +1,20 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import type { ElementContent } from 'hast';
 
+import { TextDocument } from '../src/editor/textDocument';
 import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
 import { FileRenderer } from '../src/renderers/FileRenderer';
+import type { FileContents, HighlightedToken } from '../src/types';
 import { mockFiles } from './mocks';
+import { hastTextContent } from './testUtils';
+
+type FileRendererCacheProbe = {
+  renderCache?: {
+    result?: {
+      code: ElementContent[];
+    };
+  };
+};
 
 afterAll(async () => {
   await disposeHighlighter();
@@ -19,5 +31,139 @@ describe('FileRenderer', () => {
     const instance = new FileRenderer();
     const result = await instance.asyncRender(mockFiles.file1);
     expect(instance.renderCodeAST(result)).toMatchSnapshot();
+  });
+
+  test('truncates cached code rows when document lines are deleted', async () => {
+    const instance = new FileRenderer();
+    const file: FileContents = {
+      cacheKey: 'editable-file',
+      contents: 'alpha\nbeta\ngamma',
+      name: 'editable.txt',
+    };
+
+    await instance.asyncRender(file);
+    expect(instance.renderFile(file)?.rowCount).toBe(3);
+
+    instance.applyDocumentChange(
+      new TextDocument('inmemory://editable-file', 'alpha\ngamma')
+    );
+
+    const cache = (instance as unknown as FileRendererCacheProbe).renderCache;
+    expect(cache?.result?.code).toHaveLength(2);
+    expect(cache?.result?.code.map(hastTextContent)).toEqual([
+      'alpha',
+      'gamma',
+    ]);
+  });
+
+  test('realigns cached rows when tokenization settles before EOF', async () => {
+    const instance = new FileRenderer();
+    const file: FileContents = {
+      cacheKey: 'editable-file',
+      contents: 'A\nB\nC\nD\n',
+      name: 'editable.txt',
+    };
+
+    await instance.asyncRender(file);
+    instance.renderFile(file);
+    instance.updateRenderCache(new Map([[3, [[0, '#ff0000', 'D']]]]), 'light');
+
+    const dirtyLines = new Map<number, HighlightedToken[]>([
+      [2, [[0, '', 'X']]],
+      [3, [[0, '', 'C']]],
+    ]);
+    instance.updateRenderCache(dirtyLines, 'light', true);
+    instance.applyDocumentChange(
+      new TextDocument('inmemory://editable-file', 'A\nB\nX\nC\nD\n')
+    );
+
+    const cache = (instance as unknown as FileRendererCacheProbe).renderCache;
+    const rows = cache?.result?.code ?? [];
+    expect(rows.map(hastTextContent)).toEqual(['A', 'B', 'X', 'C', 'D', '']);
+    expect(rows[4]).toMatchObject({
+      children: [
+        {
+          properties: {
+            style: 'color:#ff0000;',
+          },
+        },
+      ],
+    });
+    expect(
+      rows.map((row) =>
+        row.type === 'element'
+          ? [row.properties['data-line'], row.properties['data-line-index']]
+          : undefined
+      )
+    ).toEqual([
+      [1, 0],
+      [2, 1],
+      [3, 2],
+      [4, 3],
+      [5, 4],
+      [6, 5],
+    ]);
+  });
+
+  test.each([
+    {
+      change: 'adding',
+      previousText: 'const value = 1;',
+      nextText: 'const value = 1;\n',
+      dirtyLines: new Map<number, HighlightedToken[]>([
+        [0, [[0, '#ff0000', 'const value = 1;']]],
+        [1, [[0, '', '']]],
+      ]),
+    },
+    {
+      change: 'removing',
+      previousText: 'const value = 1;\n',
+      nextText: 'const value = 1;',
+      dirtyLines: new Map<number, HighlightedToken[]>([
+        [0, [[0, '#ff0000', 'const value = 1;']]],
+      ]),
+    },
+  ])(
+    'preserves the tokenized final row when $change a terminal newline',
+    async ({ change, previousText, nextText, dirtyLines }) => {
+      const instance = new FileRenderer();
+      const file: FileContents = {
+        cacheKey: `terminal-newline-${change}`,
+        contents: previousText,
+        name: 'terminal.ts',
+      };
+
+      await instance.asyncRender(file);
+      instance.renderFile(file);
+      instance.updateRenderCache(dirtyLines, 'light', true);
+      instance.applyDocumentChange(
+        new TextDocument('inmemory://terminal-newline', nextText, 'typescript')
+      );
+
+      const cache = (instance as unknown as FileRendererCacheProbe).renderCache;
+      expect(cache?.result?.code[0]).toMatchObject({
+        children: [
+          {
+            properties: {
+              style: 'color:#ff0000;',
+            },
+          },
+        ],
+      });
+    }
+  );
+
+  test('rebuilds an unkeyed file mutated in place', async () => {
+    const instance = new FileRenderer();
+    const file: FileContents = {
+      contents: 'alpha',
+      name: 'mutable.ts',
+    };
+
+    await instance.asyncRender(file);
+    expect(instance.renderFile(file)?.rowCount).toBe(1);
+
+    file.contents = 'alpha\nbeta\ngamma';
+    expect(instance.renderFile(file)?.rowCount).toBe(3);
   });
 });

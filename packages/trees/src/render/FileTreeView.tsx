@@ -784,6 +784,17 @@ function renderRowDecoration(
   }
 
   if ('text' in decoration) {
+    if (decoration.parts != null) {
+      return (
+        <span title={decoration.title}>
+          {decoration.parts.map((part, index) => (
+            <span key={index} style={{ color: part.color }}>
+              {part.text}
+            </span>
+          ))}
+        </span>
+      );
+    }
     return <span title={decoration.title}>{decoration.text}</span>;
   }
 
@@ -2205,27 +2216,12 @@ export function FileTreeView({
         restoreTreeFocusViewportOffsetRef.current = null;
         controller.closeSearch();
       } else if (event.key === 'Enter') {
+        // Enter selects the focused match. Enter keeps the search open. The
+        // user can then select more matches without a new search.
         const currentFocusedPath = controller.getFocusedPath();
         if (currentFocusedPath != null) {
           controller.selectOnlyPath(currentFocusedPath);
         }
-        const scrollElement = scrollRef.current;
-        const viewportHeight = readMeasuredViewportHeight(
-          scrollElement,
-          resolvedViewportHeight
-        );
-        restoreTreeFocusViewportOffsetRef.current =
-          focusedIndex < 0 || scrollElement == null
-            ? null
-            : Math.max(
-                0,
-                Math.min(
-                  focusedIndex * itemHeight - scrollElement.scrollTop,
-                  Math.max(0, viewportHeight - itemHeight)
-                )
-              );
-        restoreTreeFocusAfterSearchCloseRef.current = true;
-        controller.closeSearch();
       } else if (event.key === 'ArrowDown') {
         controller.focusNextSearchMatch();
       } else if (event.key === 'ArrowUp') {

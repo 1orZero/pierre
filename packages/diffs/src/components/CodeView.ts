@@ -16,6 +16,7 @@ import {
   queueRender,
 } from '../managers/UniversalRenderingManager';
 import type {
+  CodeViewCreateEditorOptions,
   CodeViewDiffItem,
   CodeViewFileItem,
   CodeViewItem,
@@ -26,7 +27,11 @@ import type {
   CodeViewRangeScrollTarget,
   CodeViewScrollBehavior,
   CodeViewScrollTarget,
+  DiffLineAnnotation,
+  DiffsEditor,
+  FileContents,
   HunkSeparators,
+  LineAnnotation,
   PendingCodeViewLayoutReset,
   SelectedLineRange,
   SelectionSide,
@@ -34,11 +39,14 @@ import type {
   VirtualFileMetrics,
   VirtualWindowSpecs,
 } from '../types';
+import { areManagedSnapshotsEqual } from '../utils/areManagedSnapshotsEqual';
 import { areObjectsEqual } from '../utils/areObjectsEqual';
 import { areOptionsEqual } from '../utils/areOptionsEqual';
 import { areSelectionsEqual } from '../utils/areSelectionsEqual';
 import { areThemesEqual } from '../utils/areThemesEqual';
+import { createCodeViewHeaderFooterHostElement } from '../utils/createCodeViewHeaderFooterHostElement';
 import { createWindowFromScrollPosition } from '../utils/createWindowFromScrollPosition';
+import { finishEditSessionForDiff } from '../utils/editSessionHunks';
 import { isStyleNode } from '../utils/isStyleNode';
 import { prefersReducedMotion } from '../utils/prefersReducedMotion';
 import { roundToDevicePixel } from '../utils/roundToDevicePixel';
@@ -79,6 +87,20 @@ interface LineScrollPosition {
 interface StickyBounds {
   stickyTop: number;
   stickyBottom: number;
+}
+
+// Per-record state for one of the always-rendered header/footer hosts, keeping
+// its element, the callback that last populated it, and its measured height in a
+// single place instead of parallel fields on the CodeView instance.
+interface HeaderFooterHost {
+  // The mounted host element, or undefined when the callback is absent.
+  element: HTMLDivElement | undefined;
+  // The renderCodeView{Header,Footer} callback that last populated `element`, so
+  // a swapped reference can be detected and the host re-populated in place.
+  render?(): HTMLElement | undefined;
+  // Measured height, folded into the scroll-range / item-offset math. Stays 0
+  // while the host is absent (a no-op) so the math is always coherent.
+  height: number;
 }
 
 interface PagedScrollPosition {
@@ -148,6 +170,21 @@ export type CodeViewRenderedItem<LAnnotation> =
   | CodeViewRenderedDiffItem<LAnnotation>
   | CodeViewRenderedFileItem<LAnnotation>;
 
+// Everything the React layer portals into, published together so a single store
+// subscription drives per-item slots AND the global header/footer.
+export interface CodeViewSlotSnapshot<LAnnotation> {
+  // Rendered items that need React-managed slot content (per-item headers,
+  // annotations, gutter utilities), or undefined when none.
+  items: CodeViewRenderedItem<LAnnotation>[] | undefined;
+  // The always-rendered header/footer host elements React portals into, or
+  // undefined when the corresponding renderCodeViewHeader/Footer callback is not
+  // set. Because these live in the snapshot, a host mounting/unmounting changes
+  // it and triggers a publish — which is how React learns about hosts that are
+  // created on a later (worker-ready) render.
+  header: HTMLElement | undefined;
+  footer: HTMLElement | undefined;
+}
+
 export interface CodeViewLineSelection {
   id: string;
   range: SelectedLineRange;
@@ -158,7 +195,7 @@ export interface CodeViewCoordinator<LAnnotation> {
   hasAnnotationRenderer: boolean;
   hasGutterRenderer: boolean;
   onSnapshotChange(
-    snapshot: CodeViewRenderedItem<LAnnotation>[] | undefined
+    snapshot: CodeViewSlotSnapshot<LAnnotation> | undefined
   ): void;
 }
 
@@ -228,7 +265,7 @@ type CodeViewOptionCallback<
   ): CallbackReturn<NonNullable<FileDiffOptions<LAnnotation>[TKey]>>;
 };
 
-const CODE_VIEW_DIFF_OPTION_KEYS = [
+export const CODE_VIEW_DIFF_OPTION_KEYS = [
   'theme',
   'disableLineNumbers',
   'overflow',
@@ -245,6 +282,7 @@ const CODE_VIEW_DIFF_OPTION_KEYS = [
   'diffIndicators',
   'disableBackground',
   'expandUnchanged',
+  'loadDiffFiles',
   'collapsedContextThreshold',
   'lineDiffType',
   'maxLineDiffLength',
@@ -260,7 +298,7 @@ const CODE_VIEW_DIFF_OPTION_KEYS = [
 
 type CodeViewDiffOptionKeys = (typeof CODE_VIEW_DIFF_OPTION_KEYS)[number];
 
-const CODE_VIEW_FILE_OPTION_KEYS = [
+export const CODE_VIEW_FILE_OPTION_KEYS = [
   'theme',
   'disableLineNumbers',
   'overflow',
@@ -329,6 +367,7 @@ type CodeViewModeOptions<
 const CODE_VIEW_SHARED_CALLBACK_KEYS = [
   'renderCustomHeader',
   'renderHeaderPrefix',
+  'renderHeaderFilenameSuffix',
   'renderHeaderMetadata',
   'renderAnnotation',
   'renderGutterUtility',
@@ -383,6 +422,35 @@ type CodeViewItemOptions<
   [CODE_VIEW_ITEM_OPTIONS_STATE]: CodeViewItemOptionsState;
 };
 
+// One document change published by an item's editor, as delivered to the
+// onItemEditChange/onItemEditComplete options.
+interface CodeViewItemEditChange<LAnnotation> {
+  // Item snapshot from the time of the change; used as a fallback when the
+  // session ends because the item was removed from the CodeView.
+  item: CodeViewItem<LAnnotation>;
+  file: FileContents;
+  lineAnnotations:
+    | LineAnnotation<LAnnotation>[]
+    | DiffLineAnnotation<LAnnotation>[]
+    | undefined;
+}
+
+// Mutable per-editor state shared with the CodeView-built onChange closure.
+// The closure resolves the owning item through `id` (kept current by
+// updateItemId) and caches each document change in `lastChange` so the final
+// contents can be published through onItemEditComplete when the session ends
+// — even if the editor is detached (scrolled out) at that moment.
+interface CodeViewItemEditorState<LAnnotation> {
+  id: string;
+  lastChange?: CodeViewItemEditChange<LAnnotation>;
+}
+
+// Editor bookkeeping for one edit-mode item.
+interface CodeViewItemEditorRecord<LAnnotation> {
+  editor: DiffsEditor<LAnnotation>;
+  state: CodeViewItemEditorState<LAnnotation>;
+}
+
 function defineOptionsState<LAnnotation, TMode extends CodeViewMode>(
   options: CodeViewModeOptions<LAnnotation, TMode>,
   state: CodeViewItemOptionsState
@@ -396,9 +464,14 @@ function defineOptionsState<LAnnotation, TMode extends CodeViewMode>(
   });
 }
 
+// NOTE(amadeus): It should be noted that there are times when various JS
+// tooling will try and enumerate various parts of our code when logging, and
+// sometimes this can trigger on the options prototype directly which won't
+// have access to an internal state.  This forces us to be defensive later on
+// which is important
 function getItemOptionsState<LAnnotation, TMode extends CodeViewMode>(
   options: CodeViewModeOptions<LAnnotation, TMode>
-): CodeViewItemOptionsState {
+): CodeViewItemOptionsState | undefined {
   return (options as CodeViewItemOptions<LAnnotation, TMode>)[
     CODE_VIEW_ITEM_OPTIONS_STATE
   ];
@@ -448,6 +521,60 @@ export interface CodeViewOptions<LAnnotation>
   controlledSelection?: boolean;
   onSelectedLinesChange?(selection: CodeViewLineSelection | null): void;
   layout?: CodeViewLayout;
+  /**
+   * Create an editor for an item entering edit mode (`edit: true`). Providing
+   * this option is what enables item editing. Pass the given options into the
+   * editor constructor — `new Editor(options)` — so CodeView can route
+   * document changes to `onItemEditChange`. CodeView owns the returned
+   * editor's lifecycle: it attaches when the edited item mounts, re-attaches
+   * across virtualization unmounts, and cleans the editor up once the item
+   * stops being editable (edit off, collapsed, or removed). Returning
+   * undefined declines the attach; CodeView retries on later render passes.
+   */
+  createEditor?(
+    options: CodeViewCreateEditorOptions<LAnnotation>
+  ): DiffsEditor<LAnnotation> | undefined;
+  /**
+   * Called when an edited item's document changes, with the owning item
+   * resolved by CodeView.
+   */
+  onItemEditChange?(
+    item: CodeViewItem<LAnnotation>,
+    file: FileContents,
+    lineAnnotations?:
+      | LineAnnotation<LAnnotation>[]
+      | DiffLineAnnotation<LAnnotation>[]
+  ): void;
+  /**
+   * Called once when an item's edit session ends — edit turned off, item
+   * removed (including a controlled `setItems([])` that empties the list), or
+   * item collapsed — with the final contents from the session's last document
+   * change. Not called when the session produced no changes, nor on a direct
+   * `reset()`/`cleanUp()` teardown.
+   *
+   * Committing is user-space: CodeView never writes item data itself. The
+   * recommended handler makes one combined item write (`updateItem` with a
+   * `version` bump) carrying the new file/fileDiff — with a fresh `cacheKey`,
+   * since the delivered contents differ from what the old key cached — along
+   * with `edit: false`.
+   */
+  onItemEditComplete?(
+    item: CodeViewItem<LAnnotation>,
+    file: FileContents,
+    lineAnnotations?:
+      | LineAnnotation<LAnnotation>[]
+      | DiffLineAnnotation<LAnnotation>[]
+  ): void;
+
+  /** Render a non-virtualized element at the very start of the scroll content,
+   * before the first item. It is always rendered and scrolls with the content.
+   * Return the same element across calls and mutate it in place to update;
+   * height changes are measured automatically. */
+  renderCodeViewHeader?(): HTMLElement | undefined;
+  /** Render a non-virtualized element at the very end of the scroll content,
+   * after the last item. Always rendered; height changes are measured
+   * automatically. */
+  renderCodeViewFooter?(): HTMLElement | undefined;
 
   /** Internal dev-only check to ensure your `itemMetrics` are correct.  Its
    * automatically disabled in a production build because it will hurt
@@ -456,6 +583,7 @@ export interface CodeViewOptions<LAnnotation>
 }
 
 const DEFAULT_SCROLL_INTERACTION_RESTORE_DELAY_MS = 120;
+const SUB_PIXEL_TOLERANCE = 1;
 const SCROLLING_CODE_OVERFLOW_FIX_VARIABLE = '--diffs-overflow-override';
 const SCROLL_REBASE_CONTAINER_HEIGHT = 12_000_000;
 const SCROLL_REBASE_TRIGGER_TOP = 1_000_000;
@@ -473,6 +601,18 @@ interface ScrollToAnimation {
 interface SpringStepResult {
   position: number;
   velocity: number;
+}
+
+function assertEditorFactory<LAnnotation>(
+  createEditor: CodeViewOptions<LAnnotation>['createEditor']
+): asserts createEditor is NonNullable<
+  CodeViewOptions<LAnnotation>['createEditor']
+> {
+  if (createEditor == null) {
+    throw new Error(
+      'CodeView: createEditor is required for items with edit: true'
+    );
+  }
 }
 
 // A vibe slopped heuristic to detect mobile safari only
@@ -512,6 +652,11 @@ type PendingScrollTarget =
   | PendingRangeTarget
   | PendingItemTarget;
 
+type CodeViewItemMap<LAnnotation> = Map<
+  string,
+  CodeViewContextItem<LAnnotation>
+>;
+
 export class CodeView<LAnnotation = undefined> {
   static __STOP = false;
   static __lastScrollPosition = 0;
@@ -523,8 +668,17 @@ export class CodeView<LAnnotation = undefined> {
     resizeDebugging: false,
   };
   private items: CodeViewContextItem<LAnnotation>[] = [];
-  private idToItem: Map<string, CodeViewContextItem<LAnnotation>> = new Map();
+  private idToItem: CodeViewItemMap<LAnnotation> = new Map();
   private selectedLines: CodeViewLineSelection | null = null;
+  // One editor per edit-mode item, created lazily via options.createEditor.
+  // Entries survive virtualization unmounts so a remounted item re-attaches
+  // its existing editor; attachedEditors tracks which entries are currently
+  // bound to a mounted instance. Each record's `id` is mutable so
+  // updateItemId can keep the editor's onChange closure resolving the
+  // current item (mirroring updateItemOptionsId for item options state).
+  private itemEditors: Map<string, CodeViewItemEditorRecord<LAnnotation>> =
+    new Map();
+  private attachedEditors: Set<string> = new Set();
   // NOTE(amadeus): We should probably attach an id to instances and use that
   // for lookups, instead of maintaining this map...
   private instanceToItem: Map<
@@ -535,7 +689,7 @@ export class CodeView<LAnnotation = undefined> {
   private pendingLayoutReset: PendingCodeViewLayoutReset | undefined;
   private renderOptionsRevision = 0;
   private slotCoordinator: CodeViewCoordinator<LAnnotation> | undefined;
-  private slotSnapshot: CodeViewRenderedItem<LAnnotation>[] | undefined;
+  private slotSnapshot: CodeViewSlotSnapshot<LAnnotation> | undefined;
   private scrollListeners: Set<CodeViewScrollListener<LAnnotation>> = new Set();
   private scrollHeight = 0;
   private containerHeight = -1;
@@ -589,6 +743,21 @@ export class CodeView<LAnnotation = undefined> {
   private container: HTMLDivElement | undefined = document.createElement('div');
   private stickyContainer = document.createElement('div');
   private stickyOffset = document.createElement('div');
+  // Always-rendered, non-virtualized header/footer hosts (element wrapper,
+  // last-used render callback, and the measured height). They mount as
+  // normal-flow siblings of `container` inside `root` — the header before it
+  // and the footer after it.  Created lazily, never virtualized, so no pool
+  // elements required
+  private header: HeaderFooterHost = {
+    element: undefined,
+    render: undefined,
+    height: 0,
+  };
+  private footer: HeaderFooterHost = {
+    element: undefined,
+    render: undefined,
+    height: 0,
+  };
   private elementPool: HTMLElement[] = [];
   private elementPoolVersion = 0;
   private elementPoolTracker = new WeakMap<HTMLElement, number>();
@@ -599,6 +768,7 @@ export class CodeView<LAnnotation = undefined> {
   private pendingElementPool: HTMLElement[] = [];
   private options: CodeViewOptions<LAnnotation>;
   private workerManager: WorkerPoolManager | undefined;
+  private isReadySubscription: (() => void) | undefined;
   private isContainerManaged: boolean;
 
   constructor(
@@ -624,6 +794,15 @@ export class CodeView<LAnnotation = undefined> {
 
   private getLayout(): CodeViewLayout {
     return this.options.layout ?? DEFAULT_CODE_VIEW_LAYOUT;
+  }
+
+  // Absolute offset (in scroll pixels) from the top of the scroll content to the
+  // first virtualized item. paddingTop is the container's top margin; the header
+  // host height is the always-rendered header that sits before the items and
+  // pushes every item down by its measured height. Anchor/scroll-target math adds
+  // this to an item's local `top` to get its absolute scroll position.
+  private getItemTopOffset(): number {
+    return this.getLayout().paddingTop + this.header.height;
   }
 
   private computeMetricsCache(
@@ -720,9 +899,7 @@ export class CodeView<LAnnotation = undefined> {
     }
 
     const actualHeight = this.stickyContainer.getBoundingClientRect().height;
-    // Tolerate sub-pixel rounding from summing many flex children; real
-    // discrepancies are whole rows (or larger) tall.
-    if (Math.abs(actualHeight - stickyHeight) < 1) {
+    if (Math.abs(actualHeight - stickyHeight) < SUB_PIXEL_TOLERANCE) {
       return;
     }
 
@@ -807,6 +984,107 @@ export class CodeView<LAnnotation = undefined> {
     this.container?.style.setProperty('margin-bottom', `${paddingBottom}px`);
   }
 
+  // Mount/unmount/re-populate the header and footer hosts to match the current
+  // renderCodeViewHeader/renderCodeViewFooter options. Runs inside the render
+  // cycle (see computeRenderRangeAndEmit), so the first render, later option
+  // changes, and content updates all converge on one path. Returns true when a
+  // host's content changed (a fresh mount or a swapped callback) so the render
+  // cycle takes a synchronous height measurement in the following read phase.
+  private reconcileHeaderFooterHosts(): boolean {
+    const headerChanged = this.reconcileHost('header');
+    const footerChanged = this.reconcileHost('footer');
+    return headerChanged || footerChanged;
+  }
+
+  // Reconcile a single host record: create + position + populate it when its
+  // callback first appears, re-populate it when the callback reference changes,
+  // and tear it down when the callback is removed. Otherwise the mounted host is
+  // left untouched (its content is owned by the caller, or by React via a portal).
+  // Mutates the record in place and returns whether its content changed.
+  private reconcileHost(type: 'header' | 'footer'): boolean {
+    const { root, container } = this;
+    if (root == null || container == null) {
+      return false;
+    }
+
+    const host = type === 'header' ? this.header : this.footer;
+    const render =
+      type === 'header'
+        ? this.options.renderCodeViewHeader
+        : this.options.renderCodeViewFooter;
+
+    // Callback removed → the host should not exist; tear it down and reset height.
+    if (render == null) {
+      if (host.element == null) {
+        return false;
+      }
+      this.resizeObserver?.unobserve(host.element);
+      host.element.remove();
+      host.element = undefined;
+      host.render = undefined;
+      this.setHostHeight(host, 0);
+      return false;
+    }
+
+    // Same callback on a mounted host → its content is already current (the
+    // common per-frame path).
+    if (host.element != null && render === host.render) {
+      return false;
+    }
+
+    // Callback added or swapped → ensure the host exists, then repopulate it from
+    // the callback's latest output. A returned element replaces the content; a
+    // nullish return empties the host, EXCEPT in container-managed (React) mode
+    // where React owns the host's light DOM via a portal, so it is left untouched
+    // (mirroring how cleanElement guards item light DOM).
+    const element =
+      host.element ??
+      createCodeViewHeaderFooterHostElement(
+        type,
+        container,
+        this.resizeObserver
+      );
+    host.element = element;
+    const content = render();
+    if (content != null) {
+      element.replaceChildren(content);
+    } else if (!this.isContainerManaged && element.children.length > 0) {
+      element.textContent = '';
+    }
+    host.render = render;
+    return true;
+  }
+
+  // Store a host's measured height, flagging the scroll state dirty when it
+  // actually changed so the surrounding render cycle re-derives the scroll range
+  // and re-anchors (the header offset shifts every item's position).
+  private setHostHeight(host: HeaderFooterHost, height: number): void {
+    if (host.height === height) {
+      return;
+    }
+    host.height = height;
+    this.scrollDirty = true;
+  }
+
+  // Read the mounted hosts' heights from the DOM. Called only in the render
+  // cycle's read phase (right before reconcileRenderedItems) on a change frame, so
+  // these getBoundingClientRect reads batch into the same reflow as the item
+  // height reads instead of forcing a separate reflow during the write phase.
+  private measureMountedHosts(): void {
+    if (this.header.element != null) {
+      this.setHostHeight(
+        this.header,
+        this.header.element.getBoundingClientRect().height
+      );
+    }
+    if (this.footer.element != null) {
+      this.setHostHeight(
+        this.footer,
+        this.footer.element.getBoundingClientRect().height
+      );
+    }
+  }
+
   public setup(root: HTMLElement): void {
     if (this.root != null) {
       throw new Error('CodeView.setup: already setup');
@@ -880,8 +1158,17 @@ export class CodeView<LAnnotation = undefined> {
   }
 
   public reset(): void {
+    dequeueRender(this.computeRenderRangeAndEmit);
+    this.clearReadySubscription();
     this.restoreScrollInteractions();
     this.cleanAllRenderedItems();
+    // Rendered-item cleanup above already detached mounted editors; cleaning
+    // an already-detached editor is a no-op, so this covers both cases.
+    for (const record of this.itemEditors.values()) {
+      record.editor.cleanUp();
+    }
+    this.itemEditors.clear();
+    this.attachedEditors.clear();
     this.selectedLines = null;
     this.items.length = 0;
     this.idToItem.clear();
@@ -927,6 +1214,14 @@ export class CodeView<LAnnotation = undefined> {
     this.stickyOffset.remove();
     this.stickyContainer.remove();
     this.stickyContainer.textContent = '';
+    this.header.element?.remove();
+    this.header.element = undefined;
+    this.header.render = undefined;
+    this.header.height = 0;
+    this.footer.element?.remove();
+    this.footer.element = undefined;
+    this.footer.render = undefined;
+    this.footer.height = 0;
     this.root = undefined;
     this.container = undefined;
   }
@@ -956,7 +1251,7 @@ export class CodeView<LAnnotation = undefined> {
     const item = this.idToItem.get(target.id);
     if (item == null) return;
 
-    item.instance.primeHighlightCache();
+    void item.instance.primeHighlightCache();
   }
 
   private getElementPoolLimit() {
@@ -992,6 +1287,9 @@ export class CodeView<LAnnotation = undefined> {
     }
 
     item.instance.cleanUp(true);
+    // Instance cleanup fully detached any attached editor. The editor itself
+    // stays in itemEditors so the item re-attaches it on remount.
+    this.attachedEditors.delete(item.item.id);
     item.element = undefined;
     if (element == null) {
       return;
@@ -1181,6 +1479,15 @@ export class CodeView<LAnnotation = undefined> {
     return this.idToItem.get(itemId)?.item;
   }
 
+  /**
+   * Get the live editor for an item currently in edit mode. Use this to drive
+   * editor APIs CodeView does not wrap (applyEdits, undo, setMarkers, …).
+   * Returns undefined once the item leaves edit mode.
+   */
+  public getEditor(itemId: string): DiffsEditor<LAnnotation> | undefined {
+    return this.itemEditors.get(itemId)?.editor;
+  }
+
   public updateItem(input: CodeViewItem<LAnnotation>): boolean {
     const item = this.idToItem.get(input.id);
     if (item == null) {
@@ -1195,6 +1502,7 @@ export class CodeView<LAnnotation = undefined> {
     this.markItemLayoutDirty(item);
     this.scrollDirty = true;
     this.render();
+    this.syncItemEditors();
     this.syncSelection();
     return true;
   }
@@ -1224,6 +1532,15 @@ export class CodeView<LAnnotation = undefined> {
       this.selectedLines = { ...this.selectedLines, id: newId };
       this.options.onSelectedLinesChange?.(this.selectedLines);
     }
+    const editorRecord = this.itemEditors.get(oldId);
+    if (editorRecord != null) {
+      editorRecord.state.id = newId;
+      this.itemEditors.delete(oldId);
+      this.itemEditors.set(newId, editorRecord);
+      if (this.attachedEditors.delete(oldId)) {
+        this.attachedEditors.add(newId);
+      }
+    }
     this.renamePendingScrollTarget(oldId, newId);
     this.renamePendingLayoutAnchor(oldId, newId);
     this.render();
@@ -1232,22 +1549,39 @@ export class CodeView<LAnnotation = undefined> {
 
   public addItem(input: CodeViewItem<LAnnotation>): void {
     this.addItems([input]);
-    this.syncSelection();
   }
 
   public addItems(inputs: readonly CodeViewItem<LAnnotation>[]): void {
     this.appendItemsInternal(inputs);
+    this.syncItemEditors();
     this.syncSelection();
   }
 
+  public removeItem(itemId: string): boolean {
+    const item = this.idToItem.get(itemId);
+    if (item == null) {
+      console.error(`CodeView.removeItem: unknown item id "${itemId}"`);
+      return false;
+    }
+
+    const nextItems: CodeViewItem<LAnnotation>[] = [];
+    for (const current of this.items) {
+      if (current !== item) {
+        nextItems.push(current.item);
+      }
+    }
+    this.setItems(nextItems);
+    return true;
+  }
+
   public setItems(items: readonly CodeViewItem<LAnnotation>[]): void {
-    if (items.length === 0) {
-      this.reset();
-    } else if (this.items.length === 0) {
+    let removedItemsById: Readonly<CodeViewItemMap<LAnnotation>> | undefined;
+    if (this.items.length === 0) {
       this.appendItemsInternal(items);
     } else if (!this.tryAppendItems(items)) {
-      this.reconcileItems(items);
+      removedItemsById = this.reconcileItems(items);
     }
+    this.syncItemEditors(removedItemsById);
     this.syncSelection();
   }
 
@@ -1360,12 +1694,24 @@ export class CodeView<LAnnotation = undefined> {
       this.renderOptionsRevision++;
     }
 
-    if (!this.isContainerManaged && this.items.length > 0) {
+    this.syncItemEditors();
+
+    // Render when there are items, OR when the header/footer presence changed —
+    // an otherwise-empty CodeView still needs a render to mount/unmount its hosts.
+    const headerFooterChanged =
+      prevOptions.renderCodeViewHeader !== options.renderCodeViewHeader ||
+      prevOptions.renderCodeViewFooter !== options.renderCodeViewFooter;
+    if (
+      !this.isContainerManaged &&
+      (this.items.length > 0 || headerFooterChanged)
+    ) {
       this.render();
     }
   }
 
-  private capturePendingLayoutAnchor(): void {
+  public capturePendingLayoutAnchor(
+    nextItems: Readonly<CodeViewItemMap<LAnnotation>> = this.idToItem
+  ): void {
     if (
       this.root == null ||
       this.items.length === 0 ||
@@ -1374,7 +1720,10 @@ export class CodeView<LAnnotation = undefined> {
       return;
     }
 
-    this.pendingLayoutAnchor = this.getScrollAnchor(this.getScrollTop());
+    this.pendingLayoutAnchor = this.getScrollAnchor(
+      this.getScrollTop(),
+      nextItems
+    );
   }
 
   public render(immediate = false): void {
@@ -1387,6 +1736,47 @@ export class CodeView<LAnnotation = undefined> {
     } else {
       queueRender(this.computeRenderRangeAndEmit);
     }
+  }
+
+  private isReady(): boolean {
+    const { workerManager } = this;
+    // A failed worker pool never reaches the 'initialized' state (it reverts to
+    // 'waiting' with workersFailed: true), so treat failure as ready and let
+    // the renderers fall back to synchronous highlighting.
+    if (
+      workerManager == null ||
+      workerManager.isInitialized() ||
+      workerManager.getStats().workersFailed
+    ) {
+      this.clearReadySubscription();
+      return true;
+    }
+
+    this.isReadySubscription ??= workerManager.subscribeToStatChanges(
+      (stats) => {
+        if (stats.managerState !== 'initialized' && !stats.workersFailed) {
+          return;
+        }
+
+        this.clearReadySubscription();
+        this.render(true);
+      }
+    );
+
+    // If the worker is awiting on initialization, we should attempt to
+    // initialize
+    if (workerManager.getStats().managerState === 'waiting') {
+      void workerManager.initialize().catch(() => {});
+    }
+    return false;
+  }
+
+  private clearReadySubscription(): void {
+    if (this.isReadySubscription == null) {
+      return;
+    }
+    this.isReadySubscription();
+    this.isReadySubscription = undefined;
   }
 
   public instanceChanged(
@@ -1415,6 +1805,18 @@ export class CodeView<LAnnotation = undefined> {
 
   public getContainerElement(): HTMLElement | undefined {
     return this.root;
+  }
+
+  // The always-rendered header/footer host elements, or undefined when the
+  // corresponding renderCodeViewHeader/renderCodeViewFooter callback is not
+  // set. React reads these to portal its header/footer nodes into the
+  // vanilla-managed hosts.
+  public getHeaderElement(): HTMLElement | undefined {
+    return this.header.element;
+  }
+
+  public getFooterElement(): HTMLElement | undefined {
+    return this.footer.element;
   }
 
   public getRenderedItems(): CodeViewRenderedItem<LAnnotation>[] {
@@ -1468,8 +1870,23 @@ export class CodeView<LAnnotation = undefined> {
 
   public getSlotSnapshot(
     coordinator: CodeViewCoordinator<LAnnotation>
-  ): CodeViewRenderedItem<LAnnotation>[] | undefined {
-    return getSlotSnapshot(this.getRenderedItems(), coordinator);
+  ): CodeViewSlotSnapshot<LAnnotation> | undefined {
+    return this.buildSlotSnapshot(coordinator);
+  }
+
+  // Combine the per-item slot items with the current header/footer host elements
+  // into a single snapshot. Returns undefined only when there is nothing for
+  // React to portal.
+  private buildSlotSnapshot(
+    coordinator: CodeViewCoordinator<LAnnotation>
+  ): CodeViewSlotSnapshot<LAnnotation> | undefined {
+    const items = getSlotItems(this.getRenderedItems(), coordinator);
+    const { element: header } = this.header;
+    const { element: footer } = this.footer;
+    if (items == null && header == null && footer == null) {
+      return undefined;
+    }
+    return { items, header, footer };
   }
 
   public subscribeToScroll(
@@ -1498,7 +1915,7 @@ export class CodeView<LAnnotation = undefined> {
     if (item == null) {
       return undefined;
     }
-    return item.top + this.getLayout().paddingTop;
+    return item.top + this.getItemTopOffset();
   }
 
   private createItem(
@@ -1585,10 +2002,147 @@ export class CodeView<LAnnotation = undefined> {
     const item = this.idToItem.get(this.selectedLines.id);
     if (item == null) {
       this.selectedLines = null;
+      this.options.onSelectedLinesChange?.(null);
       return;
     }
 
     item.instance.setSelectedLines(this.selectedLines.range, { notify: false });
+  }
+
+  // Collapsing an edited item suspends editing until it expands again.
+  private isItemInEditMode(item: CodeViewContextItem<LAnnotation>): boolean {
+    return item.item.edit === true && item.item.collapsed !== true;
+  }
+
+  /**
+   * Attach (or lazily create) the editor for a mounted edit-mode item. Called
+   * from the render loop so every mounted item passes through it: fresh
+   * mounts, remounts after virtualization released the item, and items whose
+   * edit flag was just turned on. Editors persist across unmounts, so a
+   * remounted item re-attaches its existing editor and resumes the retained
+   * document; the renderers keep the host's file/diff data in sync with the
+   * session so the remount paints the edited text.
+   */
+  private attachItemEditor(item: CodeViewContextItem<LAnnotation>): void {
+    const { id } = item.item;
+    const { createEditor } = this.options;
+    if (
+      item.element == null ||
+      this.attachedEditors.has(id) ||
+      !this.isItemInEditMode(item)
+    ) {
+      return;
+    }
+
+    let record = this.itemEditors.get(id);
+    let createdEditor = false;
+    try {
+      if (record == null) {
+        assertEditorFactory(createEditor);
+        // The onChange closure resolves the owning item through the record
+        // state's current id (not the id captured here) so updateItemId
+        // renames keep it pointed at the right item. It also reads the change
+        // callback off this.options at invocation time so later setOptions
+        // swaps aren't stranded on the callback captured at creation.
+        const state: CodeViewItemEditorState<LAnnotation> = { id };
+        const editor = createEditor({
+          onChange: (file, lineAnnotations) => {
+            const latest = this.idToItem.get(state.id);
+            if (latest == null) {
+              return;
+            }
+            state.lastChange = { item: latest.item, file, lineAnnotations };
+            this.options.onItemEditChange?.(latest.item, file, lineAnnotations);
+          },
+        });
+        if (editor == null) {
+          return;
+        }
+        record = { editor, state };
+        this.itemEditors.set(id, record);
+        createdEditor = true;
+      }
+
+      record.editor.edit(item.instance);
+      this.attachedEditors.add(id);
+    } catch (error) {
+      if (createdEditor && record != null) {
+        this.itemEditors.delete(id);
+        record.editor.cleanUp();
+      }
+      // A render-time factory or attachment error aborts the frame before its
+      // range is committed, so release this item immediately instead of
+      // leaving an untracked async render behind.
+      this.releaseRenderedItem(item);
+      throw error;
+    }
+  }
+
+  /**
+   * Drop editors for items that can no longer be edited: removed, edit turned
+   * off, or collapsed. Attachment happens in the render loop via
+   * attachItemEditor, so this only reconciles editors CodeView is already
+   * holding.
+   */
+  private syncItemEditors(
+    removedItems?: Readonly<CodeViewItemMap<LAnnotation>>
+  ): void {
+    if (this.itemEditors.size === 0) {
+      return;
+    }
+
+    const completions: CodeViewItemEditChange<LAnnotation>[] = [];
+    for (const [id, record] of this.itemEditors) {
+      const item = this.idToItem.get(id);
+      const removedItem = removedItems?.get(id);
+      if (removedItem == null && item != null && this.isItemInEditMode(item)) {
+        continue;
+      }
+      // cleanUp is idempotent, so editors already detached by their released
+      // instance are safe to clean again.
+      record.editor.cleanUp();
+      this.itemEditors.delete(id);
+      this.attachedEditors.delete(id);
+      // When the session's instance was released by virtualization, the
+      // cleanUp above had no detach closure left to run the exit recompute,
+      // so finish the session here (idempotent: the dirty marker clears on
+      // the first run). A live item goes through its instance, which also
+      // preserves expansion state and invalidates layout; removed items fall
+      // back to the snapshot captured with the editor's last change.
+      const { lastChange } = record.state;
+      const itemSnapshot =
+        removedItem == null
+          ? (item?.item ?? lastChange?.item)
+          : (lastChange?.item ?? removedItem.item);
+      if (itemSnapshot?.type === 'diff') {
+        if (
+          removedItem == null &&
+          item != null &&
+          item.type === 'diff' &&
+          item.instance.completeEditSession()
+        ) {
+          this.markItemLayoutDirty(item);
+          this.render();
+        }
+        finishEditSessionForDiff(itemSnapshot.fileDiff);
+      }
+      if (lastChange != null) {
+        // Prefer the current item record (it carries the update that ended
+        // the session, e.g. edit: false); the snapshot from the last change
+        // covers sessions ended by removing the item.
+        completions.push(
+          removedItem != null || item == null
+            ? lastChange
+            : { ...lastChange, item: item.item }
+        );
+      }
+    }
+
+    // Fired after the reconcile loop so an onItemEditComplete handler that
+    // calls back into updateItem/setItems doesn't re-enter the iteration.
+    for (const { item, file, lineAnnotations } of completions) {
+      this.options.onItemEditComplete?.(item, file, lineAnnotations);
+    }
   }
 
   private renamePendingScrollTarget(oldId: string, newId: string): void {
@@ -1625,18 +2179,20 @@ export class CodeView<LAnnotation = undefined> {
       );
     }
 
+    // Mapped options: served from CodeView-level names or per-item state
+    // that the plain pass-through loop cannot express.
     defineItemOption(
       prototype,
       'stickyHeader',
       () => this.options.stickyHeaders
     );
-    defineItemOption(
-      prototype,
-      'collapsed',
-      (receiver) =>
-        this.getItemOptions(getItemOptionsState(receiver), 'file')?.item
-          .collapsed === true
-    );
+    defineItemOption(prototype, 'collapsed', (receiver) => {
+      const state = getItemOptionsState(receiver);
+      if (state == null) {
+        return undefined;
+      }
+      return this.getItemOptions(state, 'file')?.item.collapsed;
+    });
 
     for (const key of CODE_VIEW_SHARED_CALLBACK_KEYS) {
       this.defineItemSharedCallback(prototype, 'file', key);
@@ -1659,6 +2215,8 @@ export class CodeView<LAnnotation = undefined> {
       );
     }
 
+    // Mapped options: served from CodeView-level names or per-item state
+    // that the plain pass-through loop cannot express.
     defineItemOption(
       prototype,
       'stickyHeader',
@@ -1669,13 +2227,13 @@ export class CodeView<LAnnotation = undefined> {
       'hunkSeparators',
       () => this.options.hunkSeparators
     );
-    defineItemOption(
-      prototype,
-      'collapsed',
-      (receiver) =>
-        this.getItemOptions(getItemOptionsState(receiver), 'diff')?.item
-          .collapsed === true
-    );
+    defineItemOption(prototype, 'collapsed', (receiver) => {
+      const state = getItemOptionsState(receiver);
+      if (state == null) {
+        return undefined;
+      }
+      return this.getItemOptions(state, 'diff')?.item.collapsed;
+    });
 
     for (const key of CODE_VIEW_SHARED_CALLBACK_KEYS) {
       this.defineItemSharedCallback(prototype, 'diff', key);
@@ -1717,7 +2275,11 @@ export class CodeView<LAnnotation = undefined> {
     options: FileOptions<LAnnotation> | FileDiffOptions<LAnnotation>,
     id: string
   ): void {
-    getItemOptionsState(options).id = id;
+    const state = getItemOptionsState(options);
+    if (state == null) {
+      throw new Error(`CodeView.updateItemOptionsId: No valid state`);
+    }
+    state.id = id;
   }
 
   private getItemOptions<TMode extends CodeViewMode>(
@@ -1756,6 +2318,9 @@ export class CodeView<LAnnotation = undefined> {
         const state = getItemOptionsState(
           receiver as CodeViewModeOptions<LAnnotation, TMode>
         );
+        if (state == null) {
+          return undefined;
+        }
         // Allocate wrapper storage only once a callback option is actually
         // observed. Most large CodeViews never read these callback properties.
         const callbackCache = (state.callbackCache ??= {});
@@ -1799,13 +2364,12 @@ export class CodeView<LAnnotation = undefined> {
       >,
       key,
       (receiver) => {
-        if (this.options.enableLineSelection !== true) {
-          return undefined;
-        }
-
         const state = getItemOptionsState(
           receiver as CodeViewModeOptions<LAnnotation, TMode>
         );
+        if (state == null) {
+          return undefined;
+        }
         // Selection callbacks also use the per-item lazy cache. The wrapper
         // owns CodeView selection synchronization and then delegates to the
         // latest user callback, if one exists.
@@ -1925,7 +2489,9 @@ export class CodeView<LAnnotation = undefined> {
    * records, rebuilds the lookup maps, and marks layout dirty whenever order,
    * membership, or versioned item data changes.
    */
-  private reconcileItems(items: readonly CodeViewItem<LAnnotation>[]): void {
+  private reconcileItems(
+    items: readonly CodeViewItem<LAnnotation>[]
+  ): Readonly<CodeViewItemMap<LAnnotation>> | undefined {
     const { items: previousItems, idToItem: previousById } = this;
     const removedItems = new Set(previousItems);
     const nextItems: CodeViewContextItem<LAnnotation>[] = [];
@@ -1937,6 +2503,7 @@ export class CodeView<LAnnotation = undefined> {
       VirtualizedFileDiff<LAnnotation> | VirtualizedFile<LAnnotation>,
       CodeViewContextItem<LAnnotation>
     > = new Map();
+    const removedItemsById: CodeViewItemMap<LAnnotation> = new Map();
     let firstDirtyIndex: number | undefined;
 
     for (let index = 0; index < items.length; index++) {
@@ -1974,18 +2541,24 @@ export class CodeView<LAnnotation = undefined> {
       nextInstanceToItem.set(item.instance, item);
     }
 
+    if (firstDirtyIndex == null) {
+      if (removedItems.size === 0) {
+        return undefined;
+      }
+      firstDirtyIndex = Math.max(nextItems.length - 1, 0);
+    }
+
+    this.capturePendingLayoutAnchor(nextIdToItem);
+
     for (let index = 0; index < previousItems.length; index++) {
       const removedItem = previousItems[index];
       if (removedItem == null || !removedItems.has(removedItem)) {
         continue;
       }
+      removedItemsById.set(removedItem.item.id, removedItem);
       this.releaseRenderedItem(removedItem);
       const dirtyIndex = Math.max(nextItems.length - 1, 0);
       firstDirtyIndex = Math.min(firstDirtyIndex ?? dirtyIndex, dirtyIndex);
-    }
-
-    if (firstDirtyIndex == null) {
-      return;
     }
 
     this.items = nextItems;
@@ -2001,6 +2574,7 @@ export class CodeView<LAnnotation = undefined> {
     this.markLayoutDirtyFromIndex(firstDirtyIndex);
     this.scrollDirty = true;
     this.render();
+    return removedItemsById.size > 0 ? removedItemsById : undefined;
   }
 
   /**
@@ -2031,8 +2605,15 @@ export class CodeView<LAnnotation = undefined> {
 
   private getMaxScrollTopForHeight(scrollHeight: number): number {
     const { paddingBottom, paddingTop } = this.getLayout();
+    // The header/footer hosts live in `root` outside `container`, so they add to
+    // the real scrollable range on top of the items + padding.
     return Math.max(
-      paddingTop + scrollHeight + paddingBottom - this.getHeight(),
+      paddingTop +
+        this.header.height +
+        scrollHeight +
+        this.footer.height +
+        paddingBottom -
+        this.getHeight(),
       0
     );
   }
@@ -2227,7 +2808,7 @@ export class CodeView<LAnnotation = undefined> {
     // Determine a stable scrollTo target for `nearest` alignment. This is to
     // ensure that we don't experience any scroll bouncing
     const offset = target.offset ?? 0;
-    const targetTop = this.getLayout().paddingTop + rect.top;
+    const targetTop = this.getItemTopOffset() + rect.top;
     const targetBottom = targetTop + rect.height;
     const currentTop = this.getScrollTop();
     const visibleTop =
@@ -2346,7 +2927,10 @@ export class CodeView<LAnnotation = undefined> {
     offset = 0,
     stickyOffset = 0
   ): number {
-    targetTop += this.getLayout().paddingTop;
+    // targetTop is item-space (0 = first item's top); shift it into absolute
+    // scroll coordinates. getItemTopOffset includes the header height, so
+    // scrolling to an item/line lands correctly when a header is present.
+    targetTop += this.getItemTopOffset();
     const viewportHeight = this.getHeight();
     // If the item + offset is bigger than the viewport, we'll fall back to
     // 'start'
@@ -2509,6 +3093,9 @@ export class CodeView<LAnnotation = undefined> {
     if (CodeView.__STOP || this.container == null) {
       return;
     }
+    if (!this.isReady()) {
+      return;
+    }
 
     // Read the current viewport and logical scroll position before making DOM
     // mutations, then capture an anchor that can survive layout recalculation.
@@ -2588,7 +3175,9 @@ export class CodeView<LAnnotation = undefined> {
     // Compute the projected logical window, then synchronize the paged scroll
     // scaffold before mutating rendered items.
     this.windowSpecs = createWindowFromScrollPosition({
-      scrollTop: targetScrollTop,
+      // The window is in item-space (0 = first item's top); subtract the header so
+      // a tall header can't desync which items fall inside the render window.
+      scrollTop: targetScrollTop - this.header.height,
       height: viewportHeight,
       scrollHeight: this.getScrollHeight(),
       fitPerfectly,
@@ -2628,6 +3217,11 @@ export class CodeView<LAnnotation = undefined> {
       }
     }
 
+    // Mount/unmount/re-populate the header/footer hosts in the same DOM-mutation
+    // window as the items, after the scroll anchor was captured above and before
+    // the post-render anchor resolve below.
+    const hostsChanged = this.reconcileHeaderFooterHosts();
+
     let prevElement: HTMLElement | undefined;
     const updatedItems = new Set<CodeViewContextItem<LAnnotation>>();
     const startingIndex = this.findFirstVisibleIndex(top);
@@ -2666,6 +3260,11 @@ export class CodeView<LAnnotation = undefined> {
         }
         prevElement = item.element;
       }
+      // Bind editors after the item render kicked off; attachItemEditor
+      // no-ops unless the item is in edit mode and not already attached.
+      if (item.item.edit === true) {
+        this.attachItemEditor(item);
+      }
     }
 
     this.renderState.firstIndex =
@@ -2673,6 +3272,12 @@ export class CodeView<LAnnotation = undefined> {
     this.renderState.lastIndex = lastRenderedIndex;
 
     this.flushSlotCoordinator();
+    this.flushManagers(updatedItems);
+    // Read phase: measure a freshly mounted or re-populated host now so its
+    // getBoundingClientRect batches into the same reflow as the item height reads.
+    if (hostsChanged) {
+      this.measureMountedHosts();
+    }
     this.reconcileRenderedItems(updatedItems);
     this.syncContainerHeight();
     this.updateStickyPositioning();
@@ -2742,7 +3347,16 @@ export class CodeView<LAnnotation = undefined> {
     }
     this.renderState.scrollTop = roundToDevicePixel(syncedScrollTop);
 
-    this.flushManagers(updatedItems);
+    // The post-render scroll-correction block above can call applyScrollFix ->
+    // syncPagedScrollScaffolding -> applyStickyPositioning, which recomputes
+    // renderState.stickyHeight from getStickyBounds(windowSpecs) for the
+    // corrected scroll position. The rendered DOM slice was committed earlier in
+    // this frame for the pre-correction window and is not re-rendered here, so
+    // that windowSpecs-based value can diverge from the committed slice by the
+    // scroll-correction delta. Recompute sticky positioning from the committed
+    // renderRange (no-arg path) so renderState.stickyHeight matches the slice
+    // actually in the DOM before we validate it.
+    this.updateStickyPositioning();
 
     this.validateStickyContainerHeight();
     this.fixContainerFocus();
@@ -2891,6 +3505,12 @@ export class CodeView<LAnnotation = undefined> {
   private updateStickyPositioning(): void {
     const stickyBounds = this.getStickyBounds();
     if (stickyBounds == null) {
+      // No rendered slice means no sticky scaffold: clear the spacer so an
+      // emptied viewer sheds the offset height captured from the last
+      // rendered layout instead of keeping phantom space in the container.
+      if (this.renderState.firstIndex === -1) {
+        this.stickyOffset.style.height = '';
+      }
       return;
     }
     const { stickyTop, stickyBottom } = stickyBounds;
@@ -2927,14 +3547,16 @@ export class CodeView<LAnnotation = undefined> {
   };
 
   private handleResize = (entries: ResizeObserverEntry[]) => {
+    let shouldRender = false;
     for (const entry of entries) {
       // If the sticky container resizes (could be from a render, which it will
       // probably ignore) or if an annotation or line wrap triggers a resize
       if (entry.target === this.stickyContainer) {
         const blockSize = entry.borderBoxSize[0].blockSize;
-        // If the height of the sticky container was already known, there's
-        // nothing for us to do
-        if (blockSize !== this.renderState.stickyHeight) {
+        if (
+          Math.abs(blockSize - this.renderState.stickyHeight) >=
+          SUB_PIXEL_TOLERANCE
+        ) {
           // If content resizes above the viewport, we want to be sure that it
           // doesn't cause things to jump within the viewport
           const currentScrollTop = this.getScrollTop();
@@ -2967,14 +3589,66 @@ export class CodeView<LAnnotation = undefined> {
             this.pendingScrollTarget = undefined;
             this.scrollAnimation = undefined;
           }
+          shouldRender = true;
+        }
+      }
+      // A header/footer host resized after mount (async content, fonts, a React
+      // portal filling in). Re-measure and, for a header — which lives above the
+      // items — re-anchor so the content under the user's eyes doesn't jump,
+      // mirroring the stickyContainer branch above. Items are untouched by a host
+      // resize, so we skip reconcileRenderedItems/updateStickyPositioning; the
+      // trailing render() reconciles the range and render window.
+      else if (
+        entry.target === this.header.element ||
+        entry.target === this.footer.element
+      ) {
+        const host =
+          entry.target === this.header.element ? this.header : this.footer;
+        const blockSize = entry.borderBoxSize[0].blockSize;
+        if (blockSize !== host.height) {
+          // Capture the anchor with the OLD offset, apply the new height, then
+          // resolve with the NEW offset so the delta cancels the layout shift. A
+          // footer only changes the scroll range, so its anchor resolves to no
+          // change (or a clamp when it shrinks below the current scroll).
+          const currentScrollTop = this.getScrollTop();
+          const anchor = this.getScrollAnchor(currentScrollTop);
+          this.setHostHeight(host, blockSize);
+          const anchoredScrollTop =
+            anchor != null ? this.resolveAnchoredScrollTop(anchor) : undefined;
+          if (anchoredScrollTop != null) {
+            const resizeAnchorDelta = anchoredScrollTop - currentScrollTop;
+            this.applyScrollFix(
+              anchoredScrollTop,
+              currentScrollTop,
+              this.windowSpecs
+            );
+            if (this.scrollAnimation != null) {
+              this.scrollAnimation.position += resizeAnchorDelta;
+            }
+          }
+          if (
+            this.pendingScrollTarget != null &&
+            this.isPendingTargetSettled(this.pendingScrollTarget)
+          ) {
+            this.pendingScrollTarget = undefined;
+            this.scrollAnimation = undefined;
+          }
+          shouldRender = true;
         }
       }
       // Root element resize (element-mode only)
       else {
         this.scrollDirty = true;
         this.heightDirty = true;
-        this.render();
+        shouldRender = true;
       }
+    }
+
+    // If the DOM changed in an unexpected way, we should kick
+    // off a synchronous render immediately because it will
+    // ensure no visual jitter if we need to scroll fix
+    if (shouldRender) {
+      this.render(true);
     }
   };
 
@@ -2998,10 +3672,33 @@ export class CodeView<LAnnotation = undefined> {
    * A scroll anchor represents the first fully visible element (in other
    * words, the first file or first line who's top is fully in the viewport).
    */
-  private getScrollAnchor(scrollTop: number): ScrollAnchor | undefined {
-    // If we already have a pendingLayoutAnchor, let's use that.
-    if (this.pendingLayoutAnchor != null) {
-      return this.pendingLayoutAnchor;
+  private getScrollAnchor(
+    scrollTop: number,
+    availableItems: ReadonlyMap<string, CodeViewContextItem<LAnnotation>> = this
+      .idToItem
+  ): ScrollAnchor | undefined {
+    let skippedItem: CodeViewContextItem<LAnnotation> | undefined;
+
+    const { pendingLayoutAnchor } = this;
+    if (pendingLayoutAnchor != null) {
+      const pendingItem = this.idToItem.get(pendingLayoutAnchor.id);
+      if (
+        pendingItem != null &&
+        availableItems.get(pendingLayoutAnchor.id) === pendingItem
+      ) {
+        return pendingLayoutAnchor;
+      }
+      if (pendingItem != null) {
+        skippedItem = pendingItem;
+      }
+    }
+
+    // We shouldn't scroll anchor when at the top, this way if a custom header
+    // gets asynchronously added it won't be hidden when added.  Also like,
+    // logically it doesn't make sense to anchor at the top of the document,
+    // you probably want to see stuff added at the top...
+    if (scrollTop <= 0) {
+      return undefined;
     }
 
     const { firstIndex, lastIndex, stickyTop, stickyBottom } = this.renderState;
@@ -3021,7 +3718,7 @@ export class CodeView<LAnnotation = undefined> {
         continue;
       }
 
-      const absoluteItemTop = this.getLayout().paddingTop + item.top;
+      const absoluteItemTop = this.getItemTopOffset() + item.top;
       const absoluteItemBottom = absoluteItemTop + item.height;
       // Skip items entirely above the viewport since we can't see it
       if (absoluteItemBottom <= scrollTop) {
@@ -3030,6 +3727,12 @@ export class CodeView<LAnnotation = undefined> {
       // If the item starts below the viewport bottom we are done searching.
       if (absoluteItemTop >= scrollTop + viewportHeight) {
         break;
+      }
+
+      const itemIsAvailable = availableItems.get(item.item.id) === item;
+      if (!itemIsAvailable) {
+        skippedItem ??= item;
+        continue;
       }
 
       if (absoluteItemTop >= scrollTop) {
@@ -3059,6 +3762,28 @@ export class CodeView<LAnnotation = undefined> {
       }
     }
 
+    // If we couldn't find an anchored item and we have a skipped item, lets
+    // attempt to anchor to the top of the item that came after it
+    if (skippedItem != null) {
+      for (
+        let index = skippedItem.index + 1;
+        index < this.items.length;
+        index++
+      ) {
+        const candidate = this.items[index];
+        if (
+          candidate != null &&
+          availableItems.get(candidate.item.id) === candidate
+        ) {
+          return {
+            type: 'item',
+            id: candidate.item.id,
+            viewportOffset: 0,
+          };
+        }
+      }
+    }
+
     // I don't think we'll ever make it this far...
     return undefined;
   }
@@ -3076,9 +3801,9 @@ export class CodeView<LAnnotation = undefined> {
       return undefined;
     }
 
-    const { paddingTop } = this.getLayout();
+    const itemTopOffset = this.getItemTopOffset();
     if (anchor.type === 'item') {
-      const absoluteItemTop = paddingTop + item.top;
+      const absoluteItemTop = itemTopOffset + item.top;
       return this.clampScrollTop(absoluteItemTop - anchor.viewportOffset);
     }
 
@@ -3089,7 +3814,7 @@ export class CodeView<LAnnotation = undefined> {
     if (linePosition == null) {
       return undefined;
     }
-    const absoluteLineTop = paddingTop + item.top + linePosition.top;
+    const absoluteLineTop = itemTopOffset + item.top + linePosition.top;
     return this.clampScrollTop(absoluteLineTop - anchor.viewportOffset);
   }
 
@@ -3181,19 +3906,14 @@ export class CodeView<LAnnotation = undefined> {
     if (this.slotCoordinator == null) {
       return;
     }
-    const { onSnapshotChange } = this.slotCoordinator;
 
-    const slotSnapshot = getSlotSnapshot(
-      this.getRenderedItems(),
-      this.slotCoordinator
-    );
-
-    if (areSlotSnapshotsEqual(this.slotSnapshot, slotSnapshot)) {
+    const slotSnapshot = this.buildSlotSnapshot(this.slotCoordinator);
+    if (areManagedSnapshotsEqual(this.slotSnapshot, slotSnapshot)) {
       return;
     }
 
     this.slotSnapshot = slotSnapshot;
-    onSnapshotChange(slotSnapshot);
+    this.slotCoordinator.onSnapshotChange(slotSnapshot);
   }
 
   private notifyScroll(): void {
@@ -3295,6 +4015,16 @@ export class CodeView<LAnnotation = undefined> {
       }
       item.top = runningTop;
       if (item.type === 'diff') {
+        const fileDiff = item.instance.consumeCodeViewLayoutChanges(
+          item.item.fileDiff
+        );
+        if (fileDiff != null) {
+          // Hydration is staged on a clone so layout only changes during this
+          // render pass, then copied back to preserve the caller's diff
+          // identity which matches the rest of the architecture of how we
+          // handle partial hydration
+          Object.assign(item.item.fileDiff, fileDiff);
+        }
         item.height = item.instance.prepareCodeViewItem(
           item.item.fileDiff,
           runningTop,
@@ -3501,7 +4231,7 @@ function hasAnnotations<LAnnotation>(item: CodeViewItem<LAnnotation>): boolean {
   return (item.annotations?.length ?? 0) > 0;
 }
 
-function getSlotSnapshot<LAnnotation>(
+function getSlotItems<LAnnotation>(
   renderedItems: CodeViewRenderedItem<LAnnotation>[],
   {
     hasHeaderRenderers,
@@ -3530,34 +4260,4 @@ function getSlotSnapshot<LAnnotation>(
   }
 
   return slotSnapshot.length > 0 ? slotSnapshot : undefined;
-}
-
-function areSlotSnapshotsEqual<LAnnotation>(
-  previous: CodeViewRenderedItem<LAnnotation>[] | undefined,
-  next: CodeViewRenderedItem<LAnnotation>[] | undefined
-): boolean {
-  if (previous == null || next == null) {
-    return previous === next;
-  }
-
-  if (previous.length !== next.length) {
-    return false;
-  }
-
-  for (let index = 0; index < previous.length; index++) {
-    const previousItem = previous[index];
-    const nextItem = next[index];
-    if (
-      previousItem == null ||
-      nextItem == null ||
-      previousItem.id !== nextItem.id ||
-      previousItem.type !== nextItem.type ||
-      previousItem.element !== nextItem.element ||
-      previousItem.version !== nextItem.version
-    ) {
-      return false;
-    }
-  }
-
-  return true;
 }
