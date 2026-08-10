@@ -3,6 +3,7 @@
   "name": "diffshub",
   "main": ".open-next/worker.js",
   "minify": true,
+  "keep_names": false,
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "routes": [{ "pattern": "diffs.veraze.io", "custom_domain": true }],

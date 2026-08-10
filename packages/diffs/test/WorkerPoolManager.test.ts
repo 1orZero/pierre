@@ -1,70 +1,26 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
+import { parseDiffFromFile } from '../src';
 import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
-import type {
-  InitializeWorkerRequest,
-  WorkerRequest,
-  WorkerResponse,
-} from '../src/worker/types';
-import { WorkerPoolManager } from '../src/worker/WorkerPoolManager';
+import type { FileContents, FileDiffMetadata } from '../src/types';
+import type { DiffRendererInstance } from '../src/worker/types';
+import {
+  createInitializedManager,
+  createInitializingManager,
+  installAnimationFramePolyfill,
+  respondToDiffRequest,
+  respondToFileRequest,
+  withTimeout,
+} from './workerPoolHarness';
 
-const originalRequestAnimationFrame =
-  typeof globalThis.requestAnimationFrame === 'function'
-    ? globalThis.requestAnimationFrame
-    : undefined;
-const originalCancelAnimationFrame =
-  typeof globalThis.cancelAnimationFrame === 'function'
-    ? globalThis.cancelAnimationFrame
-    : undefined;
-let nextFrameId = 0;
-const frames = new Map<number, ReturnType<typeof setTimeout>>();
+let restoreAnimationFrame: (() => void) | undefined;
 
 beforeAll(() => {
-  globalThis.requestAnimationFrame = ((callback) => {
-    const id = ++nextFrameId;
-    const timeout = setTimeout(() => {
-      frames.delete(id);
-      callback(performance.now());
-    }, 0);
-    frames.set(id, timeout);
-    return id;
-  }) as typeof requestAnimationFrame;
-
-  globalThis.cancelAnimationFrame = ((id) => {
-    const timeout = frames.get(id);
-    if (timeout != null) {
-      clearTimeout(timeout);
-      frames.delete(id);
-    }
-  }) as typeof cancelAnimationFrame;
+  restoreAnimationFrame = installAnimationFramePolyfill();
 });
 
-afterAll(() => {
-  for (const timeout of frames.values()) {
-    clearTimeout(timeout);
-  }
-  frames.clear();
-
-  if (originalRequestAnimationFrame != null) {
-    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-  } else {
-    Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
-  }
-  if (originalCancelAnimationFrame != null) {
-    globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-  } else {
-    Reflect.deleteProperty(globalThis, 'cancelAnimationFrame');
-  }
-});
-
-afterEach(async () => {
+afterAll(async () => {
+  restoreAnimationFrame?.();
   await disposeHighlighter();
 });
 
@@ -108,84 +64,161 @@ describe('WorkerPoolManager lifecycle', () => {
   });
 });
 
-function createInitializingManager(): {
-  initialization: Promise<void>;
-  manager: WorkerPoolManager;
-  worker: TestWorker;
-} {
-  const worker = new TestWorker();
-  const manager = new WorkerPoolManager(
-    {
-      poolSize: 1,
-      workerFactory: () => worker as unknown as Worker,
-    },
-    {
-      langs: [],
-      preferredHighlighter: 'shiki-js',
-      theme: 'github-dark',
+describe('WorkerPoolManager cache priming', () => {
+  test('primeDiffHighlightCache resolves after a successful response populates the diff cache', async () => {
+    const { manager, worker } = await createInitializedManager();
+    try {
+      const diff = createCacheableDiff();
+      const prime = manager.primeDiffHighlightCache(diff);
+      const request = await worker.waitForDiffRequest();
+
+      expect(request.diff).toEqual(diff);
+      expect(request.diff).not.toBe(diff);
+      expect(manager.getDiffResultCache(diff)).toBeUndefined();
+
+      respondToDiffRequest(manager, worker, request);
+      await withTimeout(prime);
+
+      expect(manager.getDiffResultCache(diff)).toBeDefined();
+    } finally {
+      manager.terminate();
     }
-  );
-  return {
-    initialization: manager.initialize(),
-    manager,
-    worker,
-  };
-}
-
-class TestWorker {
-  terminated = false;
-  private initializeRequest: InitializeWorkerRequest | undefined;
-  private initializeRequestResolve:
-    | ((request: InitializeWorkerRequest) => void)
-    | undefined;
-  private readonly initializeRequestPromise =
-    new Promise<InitializeWorkerRequest>((resolve) => {
-      this.initializeRequestResolve = resolve;
-    });
-  private readonly messageListeners = new Set<
-    (event: MessageEvent<WorkerResponse>) => void
-  >();
-
-  addEventListener(
-    type: string,
-    listener: (event: MessageEvent<WorkerResponse>) => void
-  ): void {
-    if (type === 'message') {
-      this.messageListeners.add(listener);
-    }
-  }
-
-  postMessage(request: WorkerRequest): void {
-    if (request.type !== 'initialize') {
-      return;
-    }
-    this.initializeRequest = request;
-    this.initializeRequestResolve?.(request);
-  }
-
-  terminate(): void {
-    this.terminated = true;
-  }
-
-  async waitForInitializeRequest(): Promise<InitializeWorkerRequest> {
-    return this.initializeRequest ?? this.initializeRequestPromise;
-  }
-
-  respond(response: WorkerResponse): void {
-    for (const listener of this.messageListeners) {
-      listener({ data: response } as MessageEvent<WorkerResponse>);
-    }
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Timed out waiting for promise to settle'));
-    }, 5_000);
-
-    promise.then(resolve, reject).finally(() => {
-      clearTimeout(timeout);
-    });
   });
+
+  test('stores a diff result under the cache key dispatched to the worker', async () => {
+    const { initialization, manager, worker } = createInitializingManager();
+    try {
+      const diff = createCacheableDiff();
+      const initialCacheKey = diff.cacheKey;
+      if (initialCacheKey == null) {
+        throw new Error('expected a cacheable diff');
+      }
+      const prime = manager.primeDiffHighlightCache(diff);
+
+      diff.cacheKey = `${initialCacheKey}:queued`;
+      const initializeRequest = await worker.waitForInitializeRequest();
+      worker.respond({
+        type: 'success',
+        requestType: 'initialize',
+        id: initializeRequest.id,
+        sentAt: Date.now(),
+      });
+      await withTimeout(initialization);
+      const request = await worker.waitForDiffRequest();
+      const dispatchedCacheKey = request.diff.cacheKey;
+      if (dispatchedCacheKey == null) {
+        throw new Error('expected a dispatched cache key');
+      }
+
+      diff.cacheKey = `${dispatchedCacheKey}:hydrated`;
+      respondToDiffRequest(manager, worker, request);
+      await withTimeout(prime);
+
+      expect(
+        manager.getDiffResultCache({ ...diff, cacheKey: dispatchedCacheKey })
+      ).toBeDefined();
+      expect(
+        manager.getDiffResultCache({ ...diff, cacheKey: initialCacheKey })
+      ).toBeUndefined();
+      expect(manager.getDiffResultCache(diff)).toBeUndefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
+  test('stores a file result under the cache key dispatched to the worker', async () => {
+    const { manager, worker } = await createInitializedManager();
+    try {
+      const file = createCacheableFile();
+      const prime = manager.primeFileHighlightCache(file);
+      const request = await worker.waitForFileRequest();
+      const dispatchedCacheKey = request.file.cacheKey;
+      if (dispatchedCacheKey == null) {
+        throw new Error('expected a dispatched cache key');
+      }
+
+      file.cacheKey = `${dispatchedCacheKey}:edited`;
+      respondToFileRequest(manager, worker, request);
+      await withTimeout(prime);
+
+      expect(
+        manager.getFileResultCache({ ...file, cacheKey: dispatchedCacheKey })
+      ).toBeDefined();
+      expect(manager.getFileResultCache(file)).toBeUndefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
+  test('primeDiffHighlightCache awaits an existing matching render task', async () => {
+    const { manager, worker } = await createInitializedManager();
+    const successes: FileDiffMetadata[] = [];
+    const instance: DiffRendererInstance = {
+      __id: 'diff-renderer',
+      onHighlightSuccess(diff) {
+        successes.push(diff);
+      },
+      onHighlightError(error) {
+        throw error;
+      },
+    };
+
+    try {
+      const diff = createCacheableDiff();
+      manager.highlightDiffAST(instance, diff);
+      const request = await worker.waitForDiffRequest();
+
+      const prime = manager.primeDiffHighlightCache(diff);
+      await Promise.resolve();
+
+      expect(worker.diffRequestCount).toBe(1);
+      respondToDiffRequest(manager, worker, request);
+      await withTimeout(prime);
+
+      expect(manager.getDiffResultCache(diff)).toBeDefined();
+      expect(successes).toEqual([diff]);
+    } finally {
+      manager.cleanUpTasks(instance);
+      manager.terminate();
+    }
+  });
+
+  test('primeDiffHighlightCache rejects when an active task is terminated', async () => {
+    const { manager, worker } = await createInitializedManager();
+    try {
+      const prime = manager.primeDiffHighlightCache(createCacheableDiff());
+      await worker.waitForDiffRequest();
+
+      manager.terminate();
+
+      let rejectedError: unknown;
+      try {
+        await prime;
+      } catch (error) {
+        rejectedError = error;
+      }
+
+      expect(rejectedError).toBeInstanceOf(Error);
+      expect((rejectedError as Error).message).toContain('pool terminated');
+    } finally {
+      manager.terminate();
+    }
+  });
+});
+
+function createCacheableDiff(): FileDiffMetadata {
+  const oldFile = createCacheableFile('file:old', 'const value = "old";\n');
+  const newFile = createCacheableFile('file:new', 'const value = "new";\n');
+  return parseDiffFromFile(oldFile, newFile);
+}
+
+function createCacheableFile(
+  cacheKey = 'file:cache',
+  contents = 'const value = true;\n'
+): FileContents {
+  return {
+    name: 'file.ts',
+    contents,
+    cacheKey,
+  };
 }

@@ -3,12 +3,14 @@ import { describe, expect, test } from 'bun:test';
 import { CodeView, type CodeViewCoordinator } from '../src/components/CodeView';
 import { DEFAULT_THEMES } from '../src/constants';
 import type { CodeViewItem, FileContents } from '../src/types';
+import { parseDiffFromFile } from '../src/utils/parseDiffFromFile';
 import {
   createRoot,
   dispatchScroll,
   installDom,
   renderItems,
   wait,
+  waitFor,
 } from './domHarness';
 
 // Kept local: the shared makeFile/makeFileItem helpers have no label
@@ -39,8 +41,25 @@ function makeFileItem(
   };
 }
 
+function makeDiffItem(id: string, name: string): CodeViewItem<undefined> {
+  return {
+    id,
+    type: 'diff',
+    fileDiff: parseDiffFromFile(
+      { name, contents: 'one\ntwo\nthree\n' },
+      { name, contents: 'one\ntwo changed\nthree\n' }
+    ),
+  };
+}
+
 function getShadowText(element: HTMLElement): string {
   return element.shadowRoot?.textContent ?? '';
+}
+
+function getHeaderCount(element: HTMLElement): number {
+  return (
+    element.shadowRoot?.querySelectorAll('[data-diffs-header]').length ?? 0
+  );
 }
 
 function getShellCounts(element: HTMLElement): {
@@ -63,7 +82,9 @@ async function waitForShellCounts(
   element: HTMLElement,
   expected: ReturnType<typeof getShellCounts>
 ): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  // ~4s budget: returns as soon as the counts match, so passing runs only pay
+  // a few iterations; the headroom is for loaded CI runners.
+  for (let attempt = 0; attempt < 400; attempt++) {
     try {
       expect(getShellCounts(element)).toEqual(expected);
       return;
@@ -129,6 +150,54 @@ describe('CodeView element pooling', () => {
     }
   });
 
+  // Header slot nodes produced by options callbacks (renderHeaderPrefix and
+  // friends) are light-DOM children of the host element, owned by the
+  // File/FileDiff instance rather than the host application. Releasing a row
+  // must remove them — a shell with leftover light-DOM children never
+  // qualifies as clean, which would exclude it from pooled reuse.
+  test('reuses shells for rows that render header slot content', async () => {
+    const { cleanup } = installDom();
+    const viewer = new CodeView({
+      theme: DEFAULT_THEMES,
+      renderHeaderPrefix: () => 'prefix content',
+    });
+    const root = createRoot({ height: 120 });
+
+    try {
+      viewer.setup(root);
+      await renderItems(viewer, [
+        makeFileItem('file:first', 'first slotted content', 100),
+        makeFileItem('file:second', 'second slotted content', 100),
+      ]);
+
+      let renderedItems = viewer.getRenderedItems();
+      expect(renderedItems.map((item) => item.id)).toEqual(['file:first']);
+      const firstElement = renderedItems[0].element;
+      await waitFor(
+        () => firstElement.querySelector('[slot="header-prefix"]') != null
+      );
+      expect(
+        firstElement.querySelectorAll('[slot="header-prefix"]')
+      ).toHaveLength(1);
+
+      root.scrollTop = 2_400;
+      dispatchScroll(root);
+      viewer.render(true);
+      await wait(0);
+
+      renderedItems = viewer.getRenderedItems();
+      expect(renderedItems.map((item) => item.id)).toEqual(['file:second']);
+      expect(renderedItems[0].element).toBe(firstElement);
+      expect(
+        firstElement.querySelectorAll('[slot="header-prefix"]')
+      ).toHaveLength(1);
+    } finally {
+      viewer.cleanUp();
+      await wait(0);
+      cleanup();
+    }
+  });
+
   test('clears pooled shells when shared css options change', async () => {
     const { cleanup } = installDom();
     const viewer = new CodeView({
@@ -162,6 +231,118 @@ describe('CodeView element pooling', () => {
       const nextElement = viewer.getRenderedItems()[0]?.element;
       expect(nextElement).toBeDefined();
       expect(pooledCandidates).not.toContain(nextElement);
+    } finally {
+      viewer.cleanUp();
+      await wait(0);
+      cleanup();
+    }
+  });
+
+  // Toggling disableFileHeader does not clear the element pool. A row
+  // remounted from a pooled shell must not display a header carried over
+  // from the shell's previous occupant.
+  test('drops stale pooled headers when disableFileHeader is enabled', async () => {
+    const { cleanup } = installDom();
+    const viewer = new CodeView({ theme: DEFAULT_THEMES });
+
+    try {
+      viewer.setup(createRoot({ height: 1000 }));
+      await renderItems(viewer, [
+        makeDiffItem('diff:first', 'first.ts'),
+        makeFileItem('file:second', 'second pooled header', 5),
+      ]);
+
+      const pooledCandidates = viewer
+        .getRenderedItems()
+        .map((item) => item.element);
+      expect(pooledCandidates).toHaveLength(2);
+      for (const element of pooledCandidates) {
+        await waitFor(() => getHeaderCount(element) === 1);
+        expect(getHeaderCount(element)).toBe(1);
+      }
+
+      // Release both rows into the pool, then disable headers — this option
+      // change intentionally keeps the pool.
+      viewer.setItems([]);
+      viewer.setOptions({ disableFileHeader: true, theme: DEFAULT_THEMES });
+      await renderItems(viewer, [
+        makeDiffItem('diff:third', 'third.ts'),
+        makeFileItem('file:fourth', 'fourth pooled header', 5),
+      ]);
+
+      const remountedItems = viewer.getRenderedItems();
+      expect(remountedItems.map((item) => item.id)).toEqual([
+        'diff:third',
+        'file:fourth',
+      ]);
+      for (const item of remountedItems) {
+        // The rows must reuse pooled shells, otherwise this test would not
+        // exercise pooled reuse at all.
+        expect(pooledCandidates).toContain(item.element);
+        expect(getHeaderCount(item.element)).toBe(0);
+      }
+    } finally {
+      viewer.cleanUp();
+      await wait(0);
+      cleanup();
+    }
+  });
+
+  // A recycled File instance must drop its sprite SVG ref. Pooled shells keep
+  // their sprite for the next occupant to adopt; a stale ref makes
+  // adoptReusableShellElements skip the new shell's own sprite, and
+  // ensureSpriteSVG then reparents the stale sprite out of whichever live
+  // item's shadow root currently holds it — blanking that item's icons.
+  test('recycled instances do not steal sprite SVGs from live shells', async () => {
+    const { cleanup } = installDom();
+    const viewer = new CodeView({});
+    const root = createRoot({ height: 120 });
+    // At default metrics (20px lines, 44px header): one is ~2052px, the
+    // 10-line two is ~252px — small enough to sit fully inside every render
+    // window below, so its renders early-return once mounted (like any live
+    // fully-visible item) and it never re-adopts its sprite. three pads the
+    // scroll range.
+    const items = [
+      makeFileItem('file:one', 'first sprite content', 100),
+      makeFileItem('file:two', 'second sprite content', 10),
+      makeFileItem('file:three', 'third sprite content', 100),
+    ];
+    const getSpriteCount = (element: HTMLElement): number =>
+      element.shadowRoot?.querySelectorAll('svg[data-icon-sprite]').length ?? 0;
+
+    try {
+      viewer.setup(root);
+      await renderItems(viewer, items);
+
+      let renderedItems = viewer.getRenderedItems();
+      expect(renderedItems.map((item) => item.id)).toEqual(['file:one']);
+      const firstElement = renderedItems[0].element;
+      expect(getSpriteCount(firstElement)).toBe(1);
+
+      // Jump past one: the fit-perfectly pass releases one (its shell and
+      // sprite go to the pool, and the instance is recycled) and mounts two
+      // into that shell, adopting the pooled sprite. The follow-up fill pass
+      // then remounts one into a brand-new empty shell. If one's recycled
+      // instance kept its sprite ref, ensureSpriteSVG reparents that sprite
+      // between the two live shadow roots instead of creating a new one,
+      // and whichever shell rendered first is left without any sprite.
+      root.scrollTop = 2_116;
+      dispatchScroll(root);
+      viewer.render(true);
+      await waitFor(() => viewer.getRenderedItems().length === 3);
+      await wait(0);
+
+      renderedItems = viewer.getRenderedItems();
+      expect(renderedItems.map((item) => item.id)).toEqual([
+        'file:one',
+        'file:two',
+        'file:three',
+      ]);
+      expect(renderedItems[1].element).toBe(firstElement);
+      expect(renderedItems[0].element).not.toBe(firstElement);
+      expect(getSpriteCount(renderedItems[0].element)).toBe(1);
+      expect(getSpriteCount(renderedItems[1].element)).toBe(1);
+      expect(getSpriteCount(renderedItems[2].element)).toBe(1);
     } finally {
       viewer.cleanUp();
       await wait(0);

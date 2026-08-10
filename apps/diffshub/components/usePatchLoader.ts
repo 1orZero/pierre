@@ -262,12 +262,10 @@ export function usePatchLoader({
           }
         }
 
-        console.time('--     request time');
         const response = await fetchGitHubDiffThroughExtension(
           `https://github.com${path}`,
           controller.signal
         );
-        console.timeEnd('--     request time');
 
         if (!response.ok) {
           const detail = (await response.text()).trim();
@@ -276,9 +274,7 @@ export function usePatchLoader({
           );
         }
         if (response.body == null) {
-          console.time('--     reading patch');
           const patchContent = await response.text();
-          console.timeEnd('--     reading patch');
           await commitFullPatch(patchContent);
           return;
         }
@@ -296,7 +292,6 @@ export function usePatchLoader({
         let pendingTreePublishFileCount = 0;
         let hasPublishedTree = false;
         let hasPublishedInitialItems = false;
-        let hasReceivedFirstStreamedFile = false;
         let lastPublishTime = performance.now();
         let lastWorkYieldTime = lastPublishTime;
         let lastTreePublishTime = lastPublishTime;
@@ -392,11 +387,6 @@ export function usePatchLoader({
           publishTreeSource();
         };
         const appendStreamedFile = async (fileText: string) => {
-          if (!hasReceivedFirstStreamedFile) {
-            hasReceivedFirstStreamedFile = true;
-            console.timeEnd('--     first streamed file');
-          }
-
           const patchMetadata = getStreamedPatchMetadata(fileText);
           if (patchMetadata != null) {
             streamTreePathPrefix = getPatchTreePathPrefix(
@@ -440,13 +430,10 @@ export function usePatchLoader({
           publishTreeSourceIfNeeded();
         };
 
-        console.time('--     first streamed file');
-        console.time('--     reading patch stream');
         const fallbackPatchContent = await streamGitPatchFiles(
           response.body,
           appendStreamedFile
         );
-        console.timeEnd('--     reading patch stream');
         if (!isCurrentRequest()) {
           return;
         }
@@ -467,7 +454,7 @@ export function usePatchLoader({
         }
         console.warn('Failed to load diff', error);
         setErrorMessage(
-          error instanceof Error
+          error instanceof Error && error.message.trim() !== ''
             ? error.message
             : GENERIC_PATCH_LOAD_ERROR_MESSAGE
         );

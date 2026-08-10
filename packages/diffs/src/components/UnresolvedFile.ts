@@ -26,12 +26,13 @@ import {
   parseMergeConflictDiffFromFile,
 } from '../utils/parseMergeConflictDiffFromFile';
 import { resolveConflict as resolveConflictDiff } from '../utils/resolveConflict';
+import { shouldUseTokenTransformer } from '../utils/shouldUseTokenTransformer';
 import { splitFileContents } from '../utils/splitFileContents';
 import type { WorkerPoolManager } from '../worker';
 import {
   FileDiff,
   type FileDiffOptions,
-  type FileDiffRenderProps,
+  type FileDiffRenderBaseProps,
 } from './FileDiff';
 
 export type RenderMergeConflictActions<LAnnotation> = (
@@ -65,10 +66,9 @@ export interface UnresolvedFileOptions<LAnnotation> extends Omit<
   maxContextLines?: number;
 }
 
-export interface UnresolvedFileRenderProps<LAnnotation> extends Omit<
-  FileDiffRenderProps<LAnnotation>,
-  'oldFile' | 'newFile'
-> {
+export interface UnresolvedFileRenderProps<
+  LAnnotation,
+> extends FileDiffRenderBaseProps<LAnnotation> {
   file?: FileContents;
   actions?: (MergeConflictDiffAction | undefined)[];
   markerRows?: MergeConflictMarkerRow[];
@@ -866,9 +866,10 @@ export function getUnresolvedDiffHunksRendererOptions<LAnnotation>(
   options?: UnresolvedFileOptions<LAnnotation>,
   baseOptions?: UnresolvedFileOptions<LAnnotation>
 ): UnresolvedFileHunksRendererOptions {
+  const merged = { ...baseOptions, ...options };
   return {
-    ...baseOptions,
-    ...options,
+    ...merged,
+    useTokenTransformer: shouldUseTokenTransformer<'diff'>(merged),
     hunkSeparators:
       typeof options?.hunkSeparators === 'function'
         ? 'custom'

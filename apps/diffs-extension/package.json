@@ -2,6 +2,7 @@
   "name": "@pierre/diffs-extension",
   "version": "0.0.0",
   "private": true,
+  "license": "apache-2.0",
   "type": "module",
   "scripts": {
     "build": "bun ./build.ts",

@@ -14,8 +14,11 @@ import { join } from 'node:path';
 import type { ComponentPropsWithoutRef } from 'react';
 import remarkGfm from 'remark-gfm';
 
+import { KeyboardShortcuts } from '../app/(diffs)/_edit/KeyboardShortcuts';
 import { CustomHunkSeparators } from '../app/(diffs)/_examples/CustomHunkSeparators/CustomHunkSeparators';
 import { CodeViewExampleTabs } from '../app/(diffs)/docs/CodeView/ExampleTabs';
+import { EditComponentTabs } from '../app/(diffs)/docs/Edit/ComponentTabs';
+import { EditWorkerPoolTabs } from '../app/(diffs)/docs/Edit/WorkerPoolTabs';
 import { PackageManagerTabs } from '../app/(diffs)/docs/Installation/PackageManagerTabs';
 import { CodeToggle } from '../app/(diffs)/docs/Overview/CodeToggle';
 import {
@@ -30,6 +33,7 @@ import {
   VanillaPropTabs,
 } from '../app/(diffs)/docs/VanillaAPI/ComponentTabs';
 import { OverviewFileTree } from '../app/(trees)/docs/Overview/OverviewFileTree';
+import { BetaBadge } from '../components/BetaBadge';
 import { DocsCodeExample } from '../components/docs/DocsCodeExample';
 import rehypeHierarchicalSlug from './rehype-hierarchical-slug';
 import remarkTocIgnore from './remark-toc-ignore';
@@ -50,9 +54,30 @@ function MdxLink(props: ComponentPropsWithoutRef<'a'>) {
   return <a target="_blank" rel="noopener noreferrer" {...props} />;
 }
 
+// Section headings whose `## ` slug should render a "Beta" badge. The badge is
+// appended after the heading text (not part of the markdown) so the slug—and
+// therefore the anchor and any child heading ids—stays unchanged.
+const BETA_DOC_HEADING_IDS = new Set(['edit-mode']);
+
+function MdxHeading2({
+  id,
+  children,
+  ...props
+}: ComponentPropsWithoutRef<'h2'>) {
+  return (
+    <h2 id={id} {...props}>
+      {children}
+      {id != null && BETA_DOC_HEADING_IDS.has(id) ? (
+        <BetaBadge className="ml-2 align-middle" />
+      ) : null}
+    </h2>
+  );
+}
+
 /** Default components available in all MDX content */
 const defaultComponents = {
   a: MdxLink,
+  h2: MdxHeading2,
   Link,
   Button,
   Notice,
@@ -63,6 +88,9 @@ const defaultComponents = {
   IconFlagFill,
   DocsCodeExample,
   CodeViewExampleTabs,
+  EditComponentTabs,
+  EditWorkerPoolTabs,
+  KeyboardShortcuts,
   CustomHunkSeparators,
   OverviewFileTree,
   MultiFileDiff,
