@@ -58,8 +58,16 @@ const taggedTitle = `${WORKTREE_PREFIX}${baseTitle}`;
 const description = SITE_DESCRIPTION;
 const SITE_ICONS: Metadata['icons'] = {
   icon: [
-    { url: '/diffshub-brand/icon.svg', type: 'image/svg+xml' },
-    { url: '/diffshub-brand/icon.ico', sizes: '32x32' },
+    {
+      url: '/diffshub-brand/icon.png',
+      type: 'image/png',
+      sizes: '512x512',
+    },
+    {
+      url: '/diffshub-brand/icon.ico',
+      type: 'image/x-icon',
+      sizes: '16x16 32x32 48x48',
+    },
   ],
   apple: '/diffshub-brand/apple-icon.png',
 };

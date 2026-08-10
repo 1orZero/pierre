@@ -33,4 +33,7 @@ await cp(
   resolve(rootDir, 'src/manifest.json'),
   resolve(distDir, 'manifest.json')
 );
+await cp(resolve(rootDir, 'src/icons'), resolve(distDir, 'icons'), {
+  recursive: true,
+});
 await cp(resolve(rootDir, 'src/popup.html'), resolve(distDir, 'popup.html'));

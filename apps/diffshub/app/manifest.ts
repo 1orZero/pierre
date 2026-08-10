@@ -2,9 +2,9 @@ import type { MetadataRoute } from 'next';
 
 import { SITE_DESCRIPTION, SITE_NAME } from '@/lib/site';
 
-// All apple-icon.png assets are 640×640, satisfying Chrome's ≥192px install
-// prompt and ≥512px splash-screen requirements.
-const APPLE_ICON_SIZE = '640x640';
+// icon.png satisfies Chrome's ≥192px install and ≥512px splash-screen
+// requirements.
+const APP_ICON_SIZE = '512x512';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -26,22 +26,10 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ['developer', 'productivity'],
     icons: [
       {
-        src: '/diffshub-brand/icon.svg',
-        type: 'image/svg+xml',
-        sizes: 'any',
-        purpose: 'any',
-      },
-      {
-        src: '/diffshub-brand/apple-icon.png',
+        src: '/diffshub-brand/icon.png',
         type: 'image/png',
-        sizes: APPLE_ICON_SIZE,
+        sizes: APP_ICON_SIZE,
         purpose: 'any',
-      },
-      {
-        src: '/diffshub-brand/apple-icon.png',
-        type: 'image/png',
-        sizes: APPLE_ICON_SIZE,
-        purpose: 'maskable',
       },
     ],
   };
