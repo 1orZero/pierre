@@ -18,18 +18,57 @@ test('only allows the diff matching the current viewer path', () => {
 });
 
 describe('fetchGitHubDiff', () => {
+  test('returns the original GitHub page title with the diff', async () => {
+    const requestedUrls: string[] = [];
+    const title =
+      'feat(import): add photo upload button to desktop import-grade landing by 1orZero · Pull Request #99 · exploratortech/DotDotGrow';
+
+    const result = await fetchGitHubDiff({
+      fetch: (url) => {
+        const requestedUrl =
+          url instanceof Request
+            ? url.url
+            : url instanceof URL
+              ? url.href
+              : url;
+        requestedUrls.push(requestedUrl);
+        return Promise.resolve(
+          new Response(
+            requestedUrl.endsWith('.diff')
+              ? 'diff --git a/a b/a'
+              : `<title>${title}</title>`
+          )
+        );
+      },
+      sourceUrl: 'https://github.com/exploratortech/DotDotGrow/pull/99',
+    });
+
+    expect(requestedUrls).toContain(
+      'https://github.com/exploratortech/DotDotGrow/pull/99'
+    );
+    expect(result).toEqual({
+      body: 'diff --git a/a b/a',
+      status: 200,
+      titleHtml: title,
+    });
+  });
+
   test('fetches github.com/{path}.diff with browser cookies and no PAT', async () => {
     let requestedUrl = '';
     let requestedInit: RequestInit | undefined;
 
     const result = await fetchGitHubDiff({
       fetch: (url, init) => {
-        requestedUrl =
+        const urlString =
           url instanceof Request
             ? url.url
             : url instanceof URL
               ? url.href
               : url;
+        if (!urlString.endsWith('.diff')) {
+          return Promise.resolve(new Response('<title>Example PR</title>'));
+        }
+        requestedUrl = urlString;
         requestedInit = init;
         return Promise.resolve(new Response('diff --git a/a b/a'));
       },
@@ -45,7 +84,11 @@ describe('fetchGitHubDiff', () => {
     expect(new Headers(requestedInit?.headers).has('Authorization')).toBe(
       false
     );
-    expect(result).toEqual({ body: 'diff --git a/a b/a', status: 200 });
+    expect(result).toEqual({
+      body: 'diff --git a/a b/a',
+      status: 200,
+      titleHtml: 'Example PR',
+    });
   });
 
   test('rejects unsupported URLs before fetching', async () => {

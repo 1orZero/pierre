@@ -53,7 +53,15 @@ window.addEventListener('message', (event) => {
         type: 'fetchDiff',
         sourceUrl: event.data.sourceUrl,
       });
-      const result = response as Pick<FetchDiffResponse, 'body' | 'status'>;
+      const result = response as {
+        body?: unknown;
+        status?: unknown;
+        titleHtml?: unknown;
+      };
+      const title = decodeGitHubTitle(result.titleHtml);
+      if (title != null) {
+        document.title = `[Diffshub] ${title}`;
+      }
       window.postMessage(
         {
           body: typeof result.body === 'string' ? result.body : '',
@@ -85,6 +93,15 @@ window.addEventListener('message', (event) => {
     }
   })();
 });
+
+function decodeGitHubTitle(titleHtml: unknown): string | undefined {
+  if (typeof titleHtml !== 'string') return undefined;
+  const title = new DOMParser().parseFromString(
+    `<title>${titleHtml}</title>`,
+    'text/html'
+  ).title;
+  return title === '' ? undefined : title;
+}
 
 function addSkipParam(href: string): string {
   try {

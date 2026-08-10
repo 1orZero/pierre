@@ -10,9 +10,10 @@ export interface FetchGitHubDiffOptions {
 export interface FetchGitHubDiffResult {
   body: string;
   status: number;
+  titleHtml?: string;
 }
 
-function getGitHubDiffUrl(sourceUrl: string): string | undefined {
+function getGitHubPageUrl(sourceUrl: string): string | undefined {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(sourceUrl);
@@ -23,7 +24,12 @@ function getGitHubDiffUrl(sourceUrl: string): string | undefined {
   if (parsedUrl.hostname !== GITHUB_HOST) return undefined;
 
   const path = normalizeGitHubPath(parsedUrl.pathname);
-  return path == null ? undefined : `https://${GITHUB_HOST}${path}.diff`;
+  return path == null ? undefined : `https://${GITHUB_HOST}${path}`;
+}
+
+function getGitHubDiffUrl(sourceUrl: string): string | undefined {
+  const pageUrl = getGitHubPageUrl(sourceUrl);
+  return pageUrl == null ? undefined : `${pageUrl}.diff`;
 }
 
 export function isGitHubDiffForPath(
@@ -41,9 +47,12 @@ export async function fetchGitHubDiff(
   options: FetchGitHubDiffOptions
 ): Promise<FetchGitHubDiffResult> {
   const diffUrl = getGitHubDiffUrl(options.sourceUrl);
-  if (diffUrl == null) {
+  const pageUrl = getGitHubPageUrl(options.sourceUrl);
+  if (diffUrl == null || pageUrl == null) {
     return { body: 'Unsupported GitHub diff URL.', status: 400 };
   }
+
+  const titleHtmlPromise = fetchGitHubTitleHtml(options.fetch, pageUrl);
 
   let response: Response;
   try {
@@ -79,5 +88,32 @@ export async function fetchGitHubDiff(
     };
   }
 
-  return { body, status: 200 };
+  const titleHtml = await titleHtmlPromise;
+  return titleHtml == null
+    ? { body, status: 200 }
+    : { body, status: 200, titleHtml };
+}
+
+async function fetchGitHubTitleHtml(
+  fetch: FetchGitHubDiffOptions['fetch'],
+  pageUrl: string
+): Promise<string | undefined> {
+  try {
+    const response = await fetch(pageUrl, {
+      cache: 'no-store',
+      credentials: 'include',
+      redirect: 'follow',
+    });
+    if (!response.ok) return undefined;
+
+    // ponytail: buffers one GitHub page; stream to </title> if this request
+    // becomes a measurable load-time or memory cost.
+    const titleHtml = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(
+      await response.text()
+    )?.[1];
+    const trimmedTitleHtml = titleHtml?.trim();
+    return trimmedTitleHtml === '' ? undefined : trimmedTitleHtml;
+  } catch {
+    return undefined;
+  }
 }
